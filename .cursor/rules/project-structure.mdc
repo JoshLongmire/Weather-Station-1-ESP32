@@ -1,0 +1,38 @@
+---
+alwaysApply: true
+---
+### Project structure guide
+
+Main entry point: [TempLoggerBatDev_v1_v14_08_02_25_DeepsleepLS.ino](mdc:TempLoggerBatDev_v1_v14_08_02_25_DeepsleepLS.ino)
+
+- **MCU/Board**: ESP32; uses deep sleep, RTC external wake, OTA, mDNS, SD logging.
+- **Sensors**:
+  - `Adafruit_BME280` at `0x76` for temperature (°F output in app), humidity, pressure.
+  - `BH1750` in continuous high-res mode for lux.
+  - Battery via `ADC1_CH7` on pin `35` with 100k/100k divider; measured volts = ADC × divider.
+- **RTC & Sleep**:
+  - `RTC_DS3231` on I²C; wake via `RTC_INT_PIN` = `GPIO_NUM_2` (EXT0 low).
+  - `prepareDeepSleep(uint32_t)` schedules DS3231 alarm and enables EXT0 + optional timer wake.
+  - Wake cause controls short vs long serve windows.
+- **Day/Night power mode**:
+  - Rolling average lux buffer determines `MODE_DAY`/`MODE_NIGHT` with dwell times and hysteresis.
+  - At sunset transition or after serve window, device logs and sleeps.
+- **Networking & OTA**:
+  - Saved Wi‑Fi networks stored in `Preferences` namespace `"wifi"`, key `"config"` (JSON with `networks: [ { ssid, pass } ]`).
+  - HTTP server on port 80; mDNS host `Esp32loggerTestStation`; OTA host `ESP32LoggerTestStation`.
+- **Storage & logging**:
+  - SD mounted on VSPI (`CS=5, SCK=18, MISO=19, MOSI=23`).
+  - CSV logs at `/logs.csv` with header `timestamp,temp_f,humidity,pressure,lux,voltage`.
+  - Logging happens once-per-wake in `handleLive()` and periodically in day mode via `performLogging()`.
+- **Status**:
+  - `STATUS_LED_PIN=4` patterns: solid for AP, slow blink when connected, fast blink while connecting.
+- **Key functions**:
+  - `setup()`, `loop()`, `connectToWifi()`, `startAPMode()`, `setupOTA()`, `setupServerRoutes()`
+  - `handleRoot()`, `handleLive()`, `handleDownload()`, `handleAdd()`, `handleDel()`, `handleReset()`, `handleSleep()`, `restartHandler()`
+  - `performLogging()`, `readLux()`, `updateDayNightState()`, `prepareDeepSleep()`
+
+### Lifecycle overview
+
+- Cold boot or undefined wake → long serve window (`UPTIME_STARTUP`), immediate first log, then day/night logic.
+- RTC/timer wake (night) → short serve window (`UPTIME_CONFIG`), one log, then sleep.
+- Day mode stays awake and logs every `LOG_INTERVAL_MS`.

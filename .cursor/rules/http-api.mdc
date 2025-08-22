@@ -1,0 +1,33 @@
+---
+description: HTTP routes and response formats for the on-board web server
+---
+### HTTP API and pages
+
+- **GET `/`**: Serves a dark UI dashboard (no external assets). Auto-refreshes by calling `/live` every 2 seconds.
+- **GET `/live`**: Returns live JSON with sensor and system metrics. Example shape:
+
+```json
+{
+  "temp": 72.5,
+  "hum": 45.1,
+  "pressure": 1012.34,
+  "lux": 1234,
+  "batt": 4.12,
+  "uptime": 123,
+  "heap": 123456,
+  "psram": 456789,
+  "time": "2025-01-01 12:34:56",
+  "sd_ok": true,
+  "rtc_ok": true,
+  "boot_count": 7
+}
+```
+
+- **GET `/download`**: Streams `/logs.csv` as `text/csv` with a `Content-Disposition` download header.
+- **POST `/add`**: Form fields `ssid`, `pass`; appends to `wifiConfig.networks` and persists to `Preferences`.
+- **GET `/del?ssid=...`**: Removes a saved network by SSID and persists changes.
+- **POST `/reset`**: Deletes and recreates `/logs.csv` with header.
+- **POST `/sleep`**: Schedules RTC alarm and enters deep sleep immediately.
+- **POST `/restart`**: Triggers a soft reboot.
+
+Related source: [TempLoggerBatDev_v1_v14_08_02_25_DeepsleepLS.ino](mdc:TempLoggerBatDev_v1_v14_08_02_25_DeepsleepLS.ino)

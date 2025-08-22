@@ -1,0 +1,30 @@
+---
+globs: *.ino,*.h,*.hpp,*.c,*.cpp
+description: ESP32 Arduino style and patterns for this project
+---
+### ESP32 Arduino style and patterns for this project
+
+- **Non‑blocking loop**: Keep `loop()` responsive; use `millis()` deltas for timing. Call `ArduinoOTA.handle()` and `server.handleClient()` each iteration.
+- **Blink/status**: Use `updateStatusLed()` to reflect AP/STA states; avoid long `delay()` in `loop()`; `blinkStatus()` is only for short UX cues.
+- **JSON**: Prefer `StaticJsonDocument` for lightweight responses. Persist Wi‑Fi config as a JSON string in `Preferences` under `wifi/config`.
+- **RTC data**: Use `RTC_DATA_ATTR` for values that must survive deep sleep (e.g., `bootCount`).
+- **I²C & Pins**: Initialize I²C with `Wire.begin(I2C_SDA, I2C_SCL)` using pins `21/22`. Keep pin defines centralized near the top of the file.
+- **Deep sleep**: Enable `esp_sleep_enable_ext0_wakeup(RTC_INT_PIN, LOW)` and finish with `esp_deep_sleep_start()`. Optionally add a timer wake as a safety fallback.
+- **SD usage**: Open files with `FILE_APPEND`/`FILE_WRITE` and close promptly. Check `SD.exists()` before streaming downloads.
+- **Time**: Use `configTzTime()` and `getLocalTime()` for timestamps; sync DS3231 from NTP on first boot or power loss.
+- **Error handling**: Print clear `Serial` diagnostics for missing peripherals (BME280, BH1750, SD, RTC) and continue gracefully.
+
+---
+globs: *.ino
+---
+### ESP32 Arduino style and patterns for this project
+
+- **Non‑blocking loop**: Keep `loop()` responsive; use `millis()` deltas for timing. Call `ArduinoOTA.handle()` and `server.handleClient()` each iteration.
+- **Blink/status**: Use `updateStatusLed()` to reflect AP/STA states; avoid long `delay()` in `loop()`; `blinkStatus()` is only for short UX cues.
+- **JSON**: Prefer `StaticJsonDocument` for lightweight responses. Persist Wi‑Fi config as a JSON string in `Preferences` under `wifi/config`.
+- **RTC data**: Use `RTC_DATA_ATTR` for values that must survive deep sleep (e.g., `bootCount`).
+- **I²C & Pins**: Initialize I²C with `Wire.begin(I2C_SDA, I2C_SCL)` using pins `21/22`. Keep pin defines centralized near the top of the file.
+- **Deep sleep**: Enable `esp_sleep_enable_ext0_wakeup(RTC_INT_PIN, LOW)` and finish with `esp_deep_sleep_start()`. Optionally add a timer wake as a safety fallback.
+- **SD usage**: Open files with `FILE_APPEND`/`FILE_WRITE` and close promptly. Check `SD.exists()` before streaming downloads.
+- **Time**: Use `configTzTime()` and `getLocalTime()` for timestamps; sync DS3231 from NTP on first boot or power loss.
+- **Error handling**: Print clear `Serial` diagnostics for missing peripherals (BME280, BH1750, SD, RTC) and continue gracefully.

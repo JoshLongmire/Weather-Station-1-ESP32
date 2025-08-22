@@ -1,0 +1,16 @@
+---
+description: Deep sleep flow, DS3231 RTC alarm scheduling, and serve windows
+---
+### Deep sleep, RTC, and serve window logic
+
+- **RTC hardware**: `RTC_DS3231` via I²C. External wake on `RTC_INT_PIN = GPIO_NUM_33` using EXT0 low level.
+- **Alarm scheduling**: `prepareDeepSleep(uint32_t wakeAfterSeconds)` computes `now + wakeAfterSeconds` (minute resolution) and sets `DS3231_A1_Minute`. Clears alarm flags before/after programming.
+- **Wake sources**: Always enables EXT0. Optionally enables `esp_sleep_enable_timer_wakeup((wakeAfterSeconds + 60) * 1e6)` as a safety fallback.
+- **Serve windows**:
+  - Cold/undefined wake → `serveWindow = UPTIME_STARTUP` (e.g., 1800 s).
+  - RTC wake → `serveWindow = UPTIME_CONFIG` (e.g., 120 s).
+  - After window elapses in night mode, perform a final log and sleep.
+- **Day/Night transitions**: `updateDayNightState()` manages lux averaging with hysteresis and dwell. On transition to night, performs a final log and sleeps for `DEEP_SLEEP_SECONDS`.
+- **Drift handling**: On setup, disables 32 kHz output, optionally syncs RTC from NTP on power loss, and prints drift if `|system - rtc| > 5s`.
+
+Source reference: [TempLoggerBatDev_v1_v14_08_02_25_DeepsleepLS.ino](mdc:TempLoggerBatDev_v1_v14_08_02_25_DeepsleepLS.ino)
