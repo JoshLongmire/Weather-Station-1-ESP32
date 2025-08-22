@@ -179,6 +179,8 @@ Wi‑Fi networks are managed via:
 - Power metering: INA3221  
 - Wind subsystem: wind vane, accelerometer  
 - Solar/charging: 900 mA MPPT controller
+- RGB LED Status debugging
+
 
 ---
 
