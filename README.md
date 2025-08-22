@@ -19,7 +19,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 - **Power modes:** DAY (awake, periodic logs) / NIGHT (short serve window → deep sleep)
 - **OTA:** ElegantOTA at `/update` (basic auth)
 
-> Full endpoint and data schema: see **[API.md](API.md)**.
+> Full endpoint and data schema: see **[docs/API.md](docs/API.md)**.
 
 ---
 
