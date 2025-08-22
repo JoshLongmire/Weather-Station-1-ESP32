@@ -8,7 +8,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ---
 
-##  Features
+## Features
 
 - **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
@@ -16,14 +16,14 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 - **Connectivity:** Wi‑Fi Station with AP fallback, mDNS
 - **Web UI:** Live dashboard, charts, log viewer & download
 - **REST API:** `/live`, `/download`, `/view-logs`, `/config`, `/add`, `/del`, etc.
-- **Power modes:** DAY (awake, periodic logs) / NIGHT (short serve window then deep sleep)
+- **Power modes:** DAY (awake, periodic logs) / NIGHT (short serve window → deep sleep)
 - **OTA:** ElegantOTA at `/update` (basic auth)
 
-> Full endpoint and data schema docs: see **[API and Function Reference](docs/API.md)**.
+> Full endpoint and data schema: see **[API.md](API.md)**.
 
 ---
 
-##  Hardware
+## Hardware
 
 - **MCU:** ESP32 (DevKit style)
 - **Sensors:** BME680 (I²C), VEML7700 (I²C)
@@ -40,25 +40,26 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 | I²C SDA / SCL | 21 / 22 |
 | SD CS / SCK / MISO / MOSI | 5 / 18 / 19 / 23 |
 | Battery ADC | 35 |
-| DS3231 INT | GPIO2 |
+| DS3231 INT | 2 |
 | Status LED | 4 |
 | Rain gauge | 27 |
 
 ---
 
-##  Repo layout
+## Repo layout
 
+```text
 .
-├─ WaetherStation08_22_25v17/ # Main Arduino sketch
-├─ API.md # API reference & schema
+├─ WaetherStation08_22_25v17/   # Main Arduino sketch
+├─ API.md                       # API reference & schema
 └─ README.md
+```
 
 ---
 
-##  Getting started
-If there's no networks on the Esp32 It'd lunch in a soft ap mode for 3 mins to config the SSID and Password click  add.    (Need to add more to this)
+## Getting started
 
-
+If no saved networks are found, the ESP32 launches a **temporary AP** for ~3 minutes so you can add Wi‑Fi credentials at `/add`.
 
 ### Prerequisites
 
@@ -70,33 +71,36 @@ If there's no networks on the Esp32 It'd lunch in a soft ap mode for 3 mins to c
   - RTClib
   - ArduinoJson
   - ElegantOTA
-  - Core: WiFi, WebServer, ESPmDNS, SD, SPI, Preferences
+  - Core: `WiFi`, `WebServer`, `ESPmDNS`, `SD`, `SPI`, `Preferences`
 
 ### Build & flash
 
 1. Open `WaetherStation08_22_25v17/*.ino` in Arduino IDE.
 2. Select your ESP32 board & COM port.
 3. (Optional) Update default OTA/AP credentials in the sketch.
-4. Flash the firmware.
-5. Open **Serial Monitor** at 115200 to see the IP/mDNS name.
+4. Upload the firmware.
+5. Open **Serial Monitor** @ **115200** to see IP and **mDNS** name.
 
 ---
 
-##  Web interface & API
+## Web interface & API
 
-After boot and Wi-Fi join, open:
+After boot and Wi‑Fi join, open:
 
-http://WeatherStation1.local
+**http://WeatherStation1.local**
 
+### Endpoints
 
-
-- Dashboard (`/`): live cards, charts, Wi-Fi management
-- OTA (`/update`): upload new firmware (.bin) — **basic auth** protected
-- Logs:
-  - `GET /download` → raw CSV stream
-  - `GET /view-logs` → recent rows in a table with filters
-- Telemetry:
-  - `GET /live` → JSON with sensor data & diagnostics (see below)
+| Endpoint        | Method | Description                                   |
+|-----------------|--------|-----------------------------------------------|
+| `/`             | GET    | Dashboard (live cards, charts, Wi‑Fi mgmt)    |
+| `/update`       | GET    | ElegantOTA firmware upload (basic auth)       |
+| `/download`     | GET    | Raw CSV log stream                            |
+| `/view-logs`    | GET    | Recent rows in a table with filters           |
+| `/config`       | GET/POST | Read/update persistent settings            |
+| `/add`          | POST   | Add Wi‑Fi SSID/password                       |
+| `/del?ssid=…`   | GET    | Delete a saved SSID                           |
+| `/live`         | GET    | JSON telemetry & diagnostics                  |
 
 ### Example `/live` JSON
 
@@ -123,11 +127,11 @@ http://WeatherStation1.local
   "sd_ok": true,
   "rtc_ok": true
 }
-
+```
 
 ---
 
-##  Power behavior
+## Power behavior
 
 - **DAY:** stays awake; logs on cadence (`LOG_INTERVAL_MS`, default 10 min)
 - **NIGHT:** short “serve” window after wake, then deep sleep (`DEEP_SLEEP_SECONDS`, default 10 min)
@@ -135,53 +139,55 @@ http://WeatherStation1.local
 
 ---
 
-##  Configuration
+## Configuration
 
 Open **`/config`** to adjust persistent settings (stored in Preferences):
 
-- `altitude_m` — used for MSLP calculation
-- `temp_unit` — `F` or `C` (UI formatting)
-- `pressure_unit` — `hPa` or `inHg` (UI formatting)
-- `bat_cal` — ADC voltage calibration multiplier
-- `time_12h` — 12h or 24h display toggle
+- `altitude_m` — used for MSLP calculation  
+- `temp_unit` — `F` or `C` (UI formatting)  
+- `pressure_unit` — `hPa` or `inHg` (UI formatting)  
+- `bat_cal` — ADC voltage calibration multiplier  
+- `time_12h` — 12h or 24h display toggle  
 
 Wi‑Fi networks are managed via:
-- `POST /add` (add SSID/password)
+
+- `POST /add` (add SSID/password)  
 - `GET /del?ssid=...` (delete SSID)
 
 ---
 
-##  Security notes
+## Security notes
 
-- OTA endpoint `/update` uses **basic auth** — change the defaults before deploying.
+- OTA endpoint `/update` uses **basic auth** — change the defaults before deploying.  
 - `/add` and `/config` are plain HTTP; run on a trusted LAN.
 
 ---
 
-##  Troubleshooting
+## Troubleshooting
 
-- If mDNS fails, use the serial‑printed IP or your router’s DHCP leases.
-- If SD fails, verify wiring, CS pin, and card format.
-- If BME680 or VEML7700 aren’t detected, check I²C wiring/addresses.
-- If RTC is absent, the device falls back to timer‑only wakes.
-
----
-
-##  Roadmap (ideas)
-
-- Optional AQ modules: MiCS‑5524,SCD41 Gas Sensor
-- S12SD UV Detect Sensor, INA3221 Current Power Voltage Monitor Triple Channel
-- Charge controller 900mA MPPT Solar Panel Controller, 
-- Wind subsystem enhancements: Wind Vane, Accelerometer
+- If **mDNS** fails, use the serial‑printed IP or your router’s DHCP leases.
+- If **SD** fails, verify wiring, CS pin, and card format.
+- If **BME680** or **VEML7700** aren’t detected, check I²C wiring/addresses.
+- If **RTC** is absent, the device falls back to timer‑only wakes.
 
 ---
 
-##  License
+## Roadmap (ideas)
+
+- Optional AQ modules: MiCS‑5524, SCD41  
+- UV sensing: S12SD  
+- Power metering: INA3221  
+- Wind subsystem: wind vane, accelerometer  
+- Solar/charging: 900 mA MPPT controller
+
+---
+
+## License
 
 Add your preferred license here (e.g., MIT).
 
 ---
 
-##  Credits
+## Credits
 
 Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), and the Arduino community.
