@@ -1564,6 +1564,9 @@ void handleViewLogs() {
   String html;
   html += "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>";
   html += "<meta name='viewport' content='width=device-width,initial-scale=1'/>";
+  html += "<meta http-equiv='Cache-Control' content='no-store'/>";
+  html += "<meta http-equiv='Pragma' content='no-cache'/>";
+  html += "<meta http-equiv='Expires' content='0'/>";
   html += "<title>Logs</title>";
   html += "<style>body{background:#121212;color:#eee;font-family:Arial,sans-serif;margin:0;padding:16px;}";
   html += ".wrap{max-width:1000px;margin:0 auto;}h2{margin:8px 0 16px;}table{width:100%;border-collapse:collapse;background:#1e1e1e;border-radius:6px;overflow:hidden;}";
@@ -1593,8 +1596,10 @@ void handleViewLogs() {
   html += "<option value='gte'>&ge; Min</option>";
   html += "<option value='lte'>&le; Max</option>";
   html += "</select>";
-  html += "<label>Min</label><input id='fMin' type='number' step='any' placeholder='min'>";
-  html += "<label>Max</label><input id='fMax' type='number' step='any' placeholder='max'>";
+  html += "<label title='Click to set from column minimum' style='cursor:pointer' onclick=\"setMinFromColumn()\">Min</label><input id='fMin' type='number' step='any' placeholder='min'>";
+  html += "<label title='Click to set from column maximum' style='cursor:pointer' onclick=\"setMaxFromColumn()\">Max</label><input id='fMax' type='number' step='any' placeholder='max'>";
+  html += "<button onclick=\"setMaxFromColumn()\" title='Fill Max from selected field'>Max</button>";
+  html += "<button onclick=\"setMinFromColumn()\" title='Fill Min from selected field'>Min</button>";
   html += "<button onclick=\"applyFilter()\">Apply Filter</button>";
   html += "<button onclick=\"clearFilter()\">Clear</button>";
   html += "</div>";
@@ -1653,9 +1658,17 @@ void handleViewLogs() {
   // Filtering script
   html += "<script>function applyFilter(){var f=parseInt(document.getElementById('fField').value,10);var type=document.getElementById('fType').value;var minStr=document.getElementById('fMin').value;var maxStr=document.getElementById('fMax').value;var hasMin=minStr!=='';var hasMax=maxStr!=='';var min=parseFloat(minStr);var max=parseFloat(maxStr);var tb=document.querySelector('tbody');if(!tb)return;for(var i=0;i<tb.rows.length;i++){var r=tb.rows[i];var t=r.cells[f]?parseFloat(r.cells[f].textContent):NaN;var show=true;if(isNaN(t)){show=false;}else{if(type==='between'){if(hasMin&&t<min)show=false;if(hasMax&&t>max)show=false;}else if(type==='gte'){if(!hasMin||t<min)show=false;}else if(type==='lte'){if(!hasMax||t>max)show=false;}}r.style.display=show?'':'none';}}</script>";
   html += "<script>function clearFilter(){var tb=document.querySelector('tbody');if(tb){for(var i=0;i<tb.rows.length;i++){tb.rows[i].style.display='';}}document.getElementById('fType').value='between';document.getElementById('fMin').value='';document.getElementById('fMax').value='';}</script>";
+  // Quick-select helpers for min/max
+  html += "<script>function computeColMinMax(f){var tb=document.querySelector('tbody');if(!tb)return null;var mn=Infinity,mx=-Infinity,has=false;for(var i=0;i<tb.rows.length;i++){var c=tb.rows[i].cells[f];if(!c)continue;var v=parseFloat(c.textContent);if(isNaN(v))continue;has=true;if(v<mn)mn=v;if(v>mx)mx=v;}if(!has)return null;return {min:mn,max:mx};}</script>";
+  html += "<script>function setMinFromColumn(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMin').value=mm.min;}</script>";
+  html += "<script>function setMaxFromColumn(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMax').value=mm.max;}</script>";
+  html += "<script>function autoRange(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMin').value=mm.min;document.getElementById('fMax').value=mm.max;applyFilter();}</script>";
   // Initialize from URL query parameters and auto-apply if present
   html += "<script>(function(){try{var p=new URLSearchParams(location.search);if(!p)return;var fieldMap={temp:1,temperature:1,hum:2,humidity:2,dew:3,dew_f:3,hi:4,heat:4,heat_index:4,pressure:5,lux:7,bat:8,batv:8,battery:8,voc:9,boot:10,boots:10,boot_count:10};var fld=p.get('field');if(fld){var v=fieldMap[fld.toLowerCase()];if(!v&&/^[0-9]+$/.test(fld))v=parseInt(fld,10);if(v)document.getElementById('fField').value=String(v);}var type=p.get('type');if(type){var t=type.toLowerCase();if(t==='gte'||t==='lte'||t==='between'){document.getElementById('fType').value=t;}}if(p.has('min')){document.getElementById('fMin').value=p.get('min');}if(p.has('max')){document.getElementById('fMax').value=p.get('max');}if(p.has('field')||p.has('min')||p.has('max')||p.has('type')){applyFilter();}}catch(e){}})();</script>";
   html += "</div></body></html>";
+  server.sendHeader("Cache-Control", "no-store, must-revalidate");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "0");
   server.send(200, "text/html", html);
 }
 // —— Add a new Wi-Fi network ——
