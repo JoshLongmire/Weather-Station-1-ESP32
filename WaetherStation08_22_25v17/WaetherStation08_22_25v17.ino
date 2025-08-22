@@ -315,6 +315,39 @@ const char* zambrettiSimple(float mslp_hPa, const char* trend){
   return "Change";
 }
 
+// Simple general forecast derived from multiple sensors
+// Uses pressure, trend, humidity, temperature, rain rate, and lux to
+// provide a concise human-readable summary for the main dashboard.
+static const char* generalForecastFromSensors(float tempF, float hum,
+                                              float mslp_hPa, const char* trend,
+                                              float rainRateMmH, float lux){
+  // Immediate rain condition has highest precedence
+  if (rainRateMmH > 0.05f) return "Raining now";
+
+  // Humidity and falling pressure → showers likely
+  if (strcmp(trend, "Falling") == 0) {
+    if (mslp_hPa < 1008.0f && hum > 75.0f) return "Rain likely";
+    if (mslp_hPa < 1005.0f) return "Unsettled / Showers";
+    return "Cloudy / Chance of rain";
+  }
+
+  // Rising pressure generally improving
+  if (strcmp(trend, "Rising") == 0) {
+    if (mslp_hPa > 1018.0f) return "Improving / Fair";
+    return "Improving";
+  }
+
+  // Steady pressure: qualify by humidity/temperature
+  if (mslp_hPa >= 1015.0f) {
+    if (hum > 75.0f) return "Humid but fair";
+    return "Fair";
+  }
+
+  // Otherwise, neutral
+  if (hum > 85.0f) return "Humid / Overcast";
+  return "Changeable";
+}
+
 void blinkStatus(int times, int durationMs) {
   pinMode(STATUS_LED_PIN, OUTPUT);
   // Schedule a non-blocking pulse sequence handled in updateStatusLed()
@@ -1043,6 +1076,10 @@ void handleRoot() {
       <div id="trendVal" class="value">--</div>
     </div>
     <div class="card">
+      <h4>Forecast</h4>
+      <div id="forecastVal" class="value">--</div>
+    </div>
+    <div class="card">
       <h4>MSLP (Sea Level Pressure)</h4>
       <div id="mslpVal" class="value">--</div>
     </div>
@@ -1224,6 +1261,9 @@ async function fetchLive() {
     document.getElementById('rainVal').textContent = (o.rain_mmph ?? 0).toFixed(2);
   }
   document.getElementById('trendVal').textContent = (o.pressure_trend ?? '');
+  if (document.getElementById('forecastVal')) {
+    document.getElementById('forecastVal').textContent = (o.general_forecast ?? '');
+  }
   document.getElementById('sdStatus').innerHTML    =
     o.sd_ok    ? '<span style="color:#0f0">&#10003;</span>' 
                : '<span style="color:#f00">&#10007;</span>';
@@ -1404,6 +1444,7 @@ void handleLive() {
   h12 = getPressureDelta(12.0f, P, &d12);
   const char* trend = classifyTrendFromDelta(h3?d3:(h6?d6:(h12?d12:0)));
   const char* forecast = zambrettiSimple(mslp_hPa, trend);
+  const char* generalForecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
 
   // Build JSON (temp in °F)
   StaticJsonDocument<768> doc;
@@ -1452,6 +1493,7 @@ void handleLive() {
   doc["mslp_inHg"] = mslp_inHg;
   doc["pressure_trend"] = trend;
   doc["forecast"] = forecast;
+  doc["general_forecast"] = generalForecast;
   doc["pressure_unit"] = appCfg.pressureInHg ? "inHg" : "hPa";
   // Last SD log time (persisted across deep sleep); format now per preference
   if (lastSdLogUnix != 0) {
