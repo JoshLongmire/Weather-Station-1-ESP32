@@ -48,3 +48,140 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ##  Repo layout
 
+.
+├─ WaetherStation08_22_25v17/ # Main Arduino sketch
+├─ API.md # API reference & schema
+└─ README.md
+
+---
+
+##  Getting started
+If there's no networks on the Esp32 It'd lunch in a soft ap mode for 3 mins to config the SSID and Password click  add.    (Need to add more to this)
+
+
+
+### Prerequisites
+
+- **Arduino IDE** (or PlatformIO)
+- **ESP32 board package**
+- Libraries:
+  - Adafruit BME680 + Adafruit Unified Sensor
+  - Adafruit VEML7700
+  - RTClib
+  - ArduinoJson
+  - ElegantOTA
+  - Core: WiFi, WebServer, ESPmDNS, SD, SPI, Preferences
+
+### Build & flash
+
+1. Open `WaetherStation08_22_25v17/*.ino` in Arduino IDE.
+2. Select your ESP32 board & COM port.
+3. (Optional) Update default OTA/AP credentials in the sketch.
+4. Flash the firmware.
+5. Open **Serial Monitor** at 115200 to see the IP/mDNS name.
+
+---
+
+##  Web interface & API
+
+After boot and Wi-Fi join, open:
+
+http://WeatherStation1.local
+
+
+
+- Dashboard (`/`): live cards, charts, Wi-Fi management
+- OTA (`/update`): upload new firmware (.bin) — **basic auth** protected
+- Logs:
+  - `GET /download` → raw CSV stream
+  - `GET /view-logs` → recent rows in a table with filters
+- Telemetry:
+  - `GET /live` → JSON with sensor data & diagnostics (see below)
+
+### Example `/live` JSON
+
+```json
+{
+  "temp": 72.8,
+  "hum": 43.2,
+  "pressure": 1013.62,
+  "lux": 455,
+  "batt": 4.07,
+  "voc_kohm": 12.5,
+  "dew_f": 50.3,
+  "hi_f": 73.9,
+  "wbt_f": 54.4,
+  "mslp_hPa": 1019.3,
+  "mslp_inHg": 30.10,
+  "pressure_trend": "Steady",
+  "forecast": "Fair",
+  "rain_mmph": 0.28,
+  "boot_count": 123,
+  "uptime": 1234,
+  "rssi": -56,
+  "ssid": "MyWiFi",
+  "sd_ok": true,
+  "rtc_ok": true
+}
+
+
+---
+
+##  Power behavior
+
+- **DAY:** stays awake; logs on cadence (`LOG_INTERVAL_MS`, default 10 min)
+- **NIGHT:** short “serve” window after wake, then deep sleep (`DEEP_SLEEP_SECONDS`, default 10 min)
+- Light thresholds (enter/exit DAY) use VEML7700 with hysteresis & dwell.
+
+---
+
+##  Configuration
+
+Open **`/config`** to adjust persistent settings (stored in Preferences):
+
+- `altitude_m` — used for MSLP calculation
+- `temp_unit` — `F` or `C` (UI formatting)
+- `pressure_unit` — `hPa` or `inHg` (UI formatting)
+- `bat_cal` — ADC voltage calibration multiplier
+- `time_12h` — 12h or 24h display toggle
+
+Wi‑Fi networks are managed via:
+- `POST /add` (add SSID/password)
+- `GET /del?ssid=...` (delete SSID)
+
+---
+
+##  Security notes
+
+- OTA endpoint `/update` uses **basic auth** — change the defaults before deploying.
+- `/add` and `/config` are plain HTTP; run on a trusted LAN.
+
+---
+
+##  Troubleshooting
+
+- If mDNS fails, use the serial‑printed IP or your router’s DHCP leases.
+- If SD fails, verify wiring, CS pin, and card format.
+- If BME680 or VEML7700 aren’t detected, check I²C wiring/addresses.
+- If RTC is absent, the device falls back to timer‑only wakes.
+
+---
+
+##  Roadmap (ideas)
+
+- Optional AQ modules: MiCS‑5524,SCD41 Gas Sensor
+- S12SD UV Detect Sensor, INA3221 Current Power Voltage Monitor Triple Channel
+- Charge controller 900mA MPPT Solar Panel Controller, 
+- Wind subsystem enhancements: Wind Vane, Accelerometer
+
+---
+
+##  License
+
+Add your preferred license here (e.g., MIT).
+
+---
+
+##  Credits
+
+Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), and the Arduino community.
