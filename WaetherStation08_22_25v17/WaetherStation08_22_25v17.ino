@@ -527,9 +527,9 @@ void performLogging() {
       for (uint8_t i=0;i<sizeCopy;i++) { if (nowMs - timesCopy[i] <= 3600000UL) tipsLastHour++; else break; }
       float rainRateMmH = tipsLastHour * MM_PER_TIP;
       const char* gforecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
-      // CSV: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count,forecast
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%.1f,%.2f,%.1f,%lu,%s\n",
-               timestr, T, H, dewF, hiF, P, trend, L, Vbat, gasKOhm, (unsigned long)bootCount, gforecast);
+      // CSV (reordered): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,boot_count
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.2f,%.1f,%lu\n",
+               timestr, T, H, dewF, hiF, P, trend, gforecast, L, Vbat, gasKOhm, (unsigned long)bootCount);
       f.close();
       // update in-memory and persisted last log timestamps
       lastSdLogUnix = (uint32_t)nowUnixTs;
@@ -803,8 +803,9 @@ void setup() {
     }
     File fboot = SD.open("/logs.csv", FILE_APPEND);
     if (fboot) {
-      // timestamp + 9 empty fields + boot_count + empty forecast column
-      fboot.printf("%s,,,,,,,,,%lu,\n", timestrBoot, (unsigned long)bootCount);
+      // New order: timestamp,temp,hum,dew,hi,pressure,trend,forecast,lux,voltage,voc,boot_count
+      // For boot row we leave numeric fields empty and include boot_count only
+      fboot.printf("%s,,,,,, ,,,,%lu\n", timestrBoot, (unsigned long)bootCount);
       fboot.close();
     }
   }
@@ -1627,16 +1628,17 @@ void handleViewLogs() {
   html += "<style>body{background:#121212;color:#eee;font-family:Arial,sans-serif;margin:0;padding:16px;}";
   html += ".wrap{max-width:1000px;margin:0 auto;}h2{margin:8px 0 16px;}table{width:100%;border-collapse:collapse;background:#1e1e1e;border-radius:6px;overflow:hidden;}";
   html += "th,td{padding:10px;border-bottom:1px solid #2a2a2a;text-align:left;}th{background:#222;}tr:nth-child(even){background:#181818;}";
-  html += "a.btn{display:inline-block;background:#444;padding:10px 12px;border-radius:6px;color:#eee;text-decoration:none;margin:12px 6px 0 0;}";
-  html += ".filters{margin:12px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;} .filters input,.filters select{background:#2a2a2a;color:#eee;border:none;border-radius:6px;padding:8px;} .filters button{background:#3d85c6;color:#fff;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;} .filters button:hover{transform:scale(1.03);}";
+  html += "a.btn,button.btn{display:inline-block;background:#444;padding:10px 12px;border-radius:6px;color:#eee;text-decoration:none;margin:12px 6px 0 0;}";
+  html += ".filters{margin:12px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;} .filters .group{display:flex;gap:8px;align-items:center;} .filters input,.filters select{background:#2a2a2a;color:#eee;border:none;border-radius:6px;padding:8px;} .filters button{background:#3d85c6;color:#fff;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;} .filters button:hover{transform:scale(1.03);}";
   html += "</style></head><body><div class='wrap'>";
   html += "<h2>Logs</h2>";
   html += "<a class='btn' href='/'>&larr; Back</a>";
   html += "<a class='btn' href='/download'>Download CSV</a>";
+  html += "<form action='/reset' method='POST' onsubmit=\"return confirm('Clear logs?')\" style='display:inline-block;margin:12px 6px 0 0;'><button class='btn' type='submit'>Clear Logs</button></form>";
   html += "<h3 style='margin:12px 0 4px;'>Filters</h3>";
   // Filter controls
   html += "<div class='filters'>";
-  html += "<label>Field</label><select id='fField'>";
+  html += "<div class='group'><label>Field</label><select id='fField'>";
   html += "<option value='1'>Temp (F)</option>";
   html += "<option value='2'>Hum (%)</option>";
   html += "<option value='3'>Dew Pt (F)</option>";
@@ -1646,23 +1648,21 @@ void handleViewLogs() {
   html += "<option value='8'>Battery (V)</option>";
   html += "<option value='9'>VOC (kΩ)</option>";
   html += "<option value='10'>Boot Count</option>";
-  html += "</select>";
-  html += "<label>Type</label><select id='fType'>";
+  html += "</select></div>";
+  html += "<div class='group'><label>Type</label><select id='fType'>";
   html += "<option value='between'>Between</option>";
   html += "<option value='gte'>&ge; Min</option>";
   html += "<option value='lte'>&le; Max</option>";
-  html += "</select>";
-  html += "<label title='Click to set from column minimum' style='cursor:pointer' onclick=\"setMinFromColumn()\">Min</label><input id='fMin' type='number' step='any' placeholder='min'>";
+  html += "</select></div>";
+  html += "<div class='group'><label title='Click to set from column minimum' style='cursor:pointer' onclick=\"setMinFromColumn()\">Min</label><input id='fMin' type='number' step='any' placeholder='min'>";
   html += "<label title='Click to set from column maximum' style='cursor:pointer' onclick=\"setMaxFromColumn()\">Max</label><input id='fMax' type='number' step='any' placeholder='max'>";
-  html += "<button onclick=\"setMaxFromColumn()\" title='Fill Max from selected field'>Max</button>";
-  html += "<button onclick=\"setMinFromColumn()\" title='Fill Min from selected field'>Min</button>";
-  html += "<button onclick=\"applyFilter()\">Apply Filter</button>";
-  html += "<button onclick=\"clearFilter()\">Clear</button>";
+  html += "<button onclick=\"autoRange()\" title='Set Min/Max from column'>Auto Range</button></div>";
+  html += "<div class='group'><button onclick=\"applyFilter()\">Apply Filter</button><button onclick=\"clearFilter()\">Clear</button></div>";
   html += "</div>";
 
   // Friendly headers
   html += "<table><thead><tr>";
-  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>Boot Count</th><th>Forecast</th>";
+  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>Boot Count</th>";
   html += "</tr></thead><tbody>";
 
   // Skip the CSV header if present
@@ -1671,10 +1671,10 @@ void handleViewLogs() {
 
   for (size_t i = startIdx; i < lines.size(); ++i) {
     String ln = lines[i];
-    // Split by comma into up to 11 fields (added voc_kohm and boot_count)
-    String cols[11];
+    // Split by comma into up to 12 fields (forecast placed before lux)
+    String cols[12];
     int col = 0; int from = 0; int idx;
-    while (col < 10 && (idx = ln.indexOf(',', from)) >= 0) {
+    while (col < 11 && (idx = ln.indexOf(',', from)) >= 0) {
       cols[col++] = ln.substring(from, idx);
       from = idx + 1;
     }
@@ -1703,11 +1703,11 @@ void handleViewLogs() {
       html += "<td>" + cols[4] + "</td>"; // hi_f
       html += "<td>" + cols[5] + "</td>"; // pressure
       html += "<td>" + cols[6] + "</td>"; // trend
-      html += "<td>" + cols[7] + "</td>"; // lux
-      html += "<td>" + cols[8] + "</td>"; // voltage
-      html += "<td>" + cols[9] + "</td>"; // voc_kohm
-      html += "<td>" + cols[10] + "</td>"; // boot_count
-      if (col > 11) { html += "<td>" + cols[11] + "</td>"; } else { html += "<td></td>"; }
+      html += "<td>" + cols[7] + "</td>";  // forecast (after trend)
+      html += "<td>" + cols[8] + "</td>";  // lux
+      html += "<td>" + cols[9] + "</td>";  // voltage
+      html += "<td>" + cols[10] + "</td>"; // voc_kohm
+      html += "<td>" + cols[11] + "</td>"; // boot_count
     }
     html += "</tr>";
   }
@@ -1771,7 +1771,7 @@ void handleReset() {
 
   File f = SD.open("/logs.csv", FILE_WRITE);
   if (f) {
-    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count,forecast");
+    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,boot_count");
     f.close();
   } else {
     Serial.println("❌ Failed to recreate logs.csv");
