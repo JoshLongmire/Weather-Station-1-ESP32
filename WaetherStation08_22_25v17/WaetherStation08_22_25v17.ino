@@ -65,7 +65,7 @@ const uint32_t DWELL_MS = 30000;      // 30 s dwell
 const uint32_t SAMPLE_INTERVAL_MS = 2000;
 
 const uint8_t LUX_BUF_SIZE = DWELL_MS / SAMPLE_INTERVAL_MS;  // 15 samples
-uint16_t luxBuffer[LUX_BUF_SIZE];
+uint32_t luxBuffer[LUX_BUF_SIZE];
 uint8_t luxIndex = 0;
 uint8_t luxCount = 0;
 uint32_t luxSum = 0;
@@ -514,9 +514,22 @@ void performLogging() {
     // —— append to SD ——
     File f = SD.open("/logs.csv", FILE_APPEND);
     if (f) {
-      // CSV: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%.1f,%.2f,%.1f,%lu\n",
-               timestr, T, H, dewF, hiF, P, trend, L, Vbat, gasKOhm, (unsigned long)bootCount);
+      // Compute MSLP and rain rate for forecast
+      float mslp_hPa = computeMSLP_hPa(P, Tc, appCfg.altitudeM);
+      const float MM_PER_TIP = 0.2794f;
+      uint32_t nowMs = millis();
+      uint32_t tipsLastHour = 0;
+      uint8_t sizeCopy, headCopy; uint32_t timesCopy[128];
+      portENTER_CRITICAL(&rainMux);
+      sizeCopy = rainTipSize; headCopy = rainTipHead;
+      for (uint8_t i=0;i<sizeCopy;i++) { int idx = (headCopy + 128 - 1 - i) % 128; timesCopy[i] = rainTipTimesMs[idx]; }
+      portEXIT_CRITICAL(&rainMux);
+      for (uint8_t i=0;i<sizeCopy;i++) { if (nowMs - timesCopy[i] <= 3600000UL) tipsLastHour++; else break; }
+      float rainRateMmH = tipsLastHour * MM_PER_TIP;
+      const char* gforecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
+      // CSV: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count,forecast
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%.1f,%.2f,%.1f,%lu,%s\n",
+               timestr, T, H, dewF, hiF, P, trend, L, Vbat, gasKOhm, (unsigned long)bootCount, gforecast);
       f.close();
       // update in-memory and persisted last log timestamps
       lastSdLogUnix = (uint32_t)nowUnixTs;
@@ -557,7 +570,7 @@ void updateDayNightState() {
   uint32_t now = millis();
   if (now - lastSampleMillis >= SAMPLE_INTERVAL_MS) {
     lastSampleMillis = now;
-    uint16_t v = (uint16_t)readLux();
+    uint32_t v = (uint32_t)readLux();
     if (luxCount < LUX_BUF_SIZE) {
       luxBuffer[luxIndex] = v;
       luxSum += v;
@@ -753,9 +766,10 @@ void setup() {
   if (!lightMeter.begin()) {
     Serial.println("❌ VEML7700 not found!");
   } else {
-    // Configure for wide range and fast updates similar to prior BH1750
-    lightMeter.setGain(VEML7700_GAIN_1);
-    lightMeter.setIntegrationTime(VEML7700_IT_100MS);
+    // Configure for maximum range (approx 0..120k lux):
+    // Lowest gain and shortest integration prevent saturation in bright sun
+    lightMeter.setGain(VEML7700_GAIN_1_8);
+    lightMeter.setIntegrationTime(VEML7700_IT_25MS);
     Serial.println("✅ VEML7700 initialized");
   }
 
@@ -768,7 +782,7 @@ void setup() {
 
   // —— Initial Light Buffer & First Log ——
   float firstLux = readLux();
-  luxBuffer[0] = (uint16_t)firstLux;
+  luxBuffer[0] = (uint32_t)firstLux;
   luxSum = luxBuffer[0];
   luxIndex = 1;
   luxCount = 1;
@@ -789,8 +803,8 @@ void setup() {
     }
     File fboot = SD.open("/logs.csv", FILE_APPEND);
     if (fboot) {
-      // timestamp + 8 empty fields + boot_count
-      fboot.printf("%s,,,,,,,,,%lu\n", timestrBoot, (unsigned long)bootCount);
+      // timestamp + 9 empty fields + boot_count + empty forecast column
+      fboot.printf("%s,,,,,,,,,%lu,\n", timestrBoot, (unsigned long)bootCount);
       fboot.close();
     }
   }
@@ -1648,7 +1662,7 @@ void handleViewLogs() {
 
   // Friendly headers
   html += "<table><thead><tr>";
-  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>Boot Count</th>";
+  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>Boot Count</th><th>Forecast</th>";
   html += "</tr></thead><tbody>";
 
   // Skip the CSV header if present
@@ -1683,6 +1697,7 @@ void handleViewLogs() {
       html += "<td>" + cols[5] + "</td>"; // voltage
       html += "<td></td>";                 // voc empty
       html += "<td></td>";                 // boot_count empty
+      html += "<td></td>";                 // forecast empty
     } else {
       html += "<td>" + cols[3] + "</td>"; // dew_f
       html += "<td>" + cols[4] + "</td>"; // hi_f
@@ -1692,6 +1707,7 @@ void handleViewLogs() {
       html += "<td>" + cols[8] + "</td>"; // voltage
       html += "<td>" + cols[9] + "</td>"; // voc_kohm
       html += "<td>" + cols[10] + "</td>"; // boot_count
+      if (col > 11) { html += "<td>" + cols[11] + "</td>"; } else { html += "<td></td>"; }
     }
     html += "</tr>";
   }
@@ -1755,7 +1771,7 @@ void handleReset() {
 
   File f = SD.open("/logs.csv", FILE_WRITE);
   if (f) {
-    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count");
+    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count,forecast");
     f.close();
   } else {
     Serial.println("❌ Failed to recreate logs.csv");
