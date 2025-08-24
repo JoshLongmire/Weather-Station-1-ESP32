@@ -1,6 +1,6 @@
 ### ESP32 Weather Station – Public API and Function Reference
 
-This document describes the HTTP endpoints, persisted configuration, CSV schema, and the major functions exported in the `TempLoggerBatDev_v1_v16_08_13_25.ino` sketch. It also includes examples and integration guidance.
+This document describes the HTTP endpoints, persisted configuration, CSV schema, and the major functions exported in the current Arduino sketch (`WaetherStation08_22_25v17.ino`). It also includes examples and integration guidance.
 
 ## Overview
 - Device: ESP32-based weather station
@@ -30,21 +30,23 @@ Timing and mode constants:
 ## CSV Log Schema
 File: `/logs.csv`
 
-Header created by Reset:
+Header created by Reset (unified 14 columns):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,lux,voltage,voc_kohm,boot_count
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
 ```
 
-Example row:
+Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,455.0,4.07,12.5,123
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,4.07,12.5,30.10,0.28,123
 ```
 
 Notes:
 - Temperature values in CSV are in °F.
 - Pressure is in hPa.
 - `pressure_trend` is one of `Rising|Falling|Steady`.
-- VOC is derived from BME680 gas resistance in kΩ.
+- `forecast` is a simplified label derived from MSLP, trend, humidity, temp, rain rate, and lux.
+- `voc_kohm` is derived from BME680 gas resistance in kΩ.
+- `rain` column is written in mm/h or in/h depending on the current unit setting.
 
 ## HTTP API
 Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://WeatherStation1.local` if supported.
@@ -111,6 +113,7 @@ curl -LOJ http://WeatherStation1.local/download
 
 ### GET `/view-logs`
 - Renders the last N rows of the CSV in a styled HTML table with client-side filters.
+- Client-side controls include field selector (Temp, Hum, Dew, Heat Index, Pressure, Lux, Battery, VOC, MSLP, Rain, Boot Count), comparison type, and Min/Max with Auto Range.
 - Query helper parameters (optional): `field`, `type`, `min`, `max`.
   - Example: `?field=temp&type=between&min=60&max=80`.
 
@@ -119,9 +122,9 @@ curl -LOJ http://WeatherStation1.local/download
 - Fields:
   - `altitude_m` (float) — affects MSLP calculation
   - `temp_unit` (`F` or `C`) — UI formatting preference
-  - `pressure_unit` (`hPa` or `inHg`) — UI formatting preference for MSLP
   - `bat_cal` (float) — multiplier for battery calibration
   - `time_12h` (bool via form select: `12` → true, `24` → false)
+  - `rain_unit` (`mm/h` or `in/h`) — units for the `rain` column and UI label
 
 ### POST `/config`
 - Saves settings to Preferences namespace `app`.

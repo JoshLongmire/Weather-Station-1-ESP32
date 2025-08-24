@@ -51,7 +51,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 ```text
 .
 ├─ WaetherStation08_22_25v17/   # Main Arduino sketch
-├─ API.md                       # API reference & schema
+├─ docs/API.md                  # API reference & schema
 └─ README.md
 ```
 
@@ -102,7 +102,7 @@ After boot and Wi‑Fi join, open:
 | `/del?ssid=…`   | GET    | Delete a saved SSID                           |
 | `/live`         | GET    | JSON telemetry & diagnostics                  |
 
-### Example `/live` JSON
+### Example `/live` JSON (selected fields)
 
 ```json
 {
@@ -145,9 +145,9 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
 
 - `altitude_m` — used for MSLP calculation  
 - `temp_unit` — `F` or `C` (UI formatting)  
-- `pressure_unit` — `hPa` or `inHg` (UI formatting)  
 - `bat_cal` — ADC voltage calibration multiplier  
 - `time_12h` — 12h or 24h display toggle  
+- `rain_unit` — `mm/h` or `in/h` for log/UI rain values  
 
 Wi‑Fi networks are managed via:
 
