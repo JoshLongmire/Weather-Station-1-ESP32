@@ -180,13 +180,9 @@ Wi‑Fi networks are managed via:
 - Wind subsystem: wind vane, accelerometer  
 - Solar/charging: 900 mA MPPT controller
 - RGB LED Status debugging
-
-
----
-
-## License
-
-Add your preferred license here (e.g., MIT).
+- adding, Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna, Dual Type-C, WiFi & Bluetooth– Compatible with      
+MicroPython & ESP-IDF N16R8 (16MB +Antenna Gold Edition)
+- INA3221 Current Power Voltage Monitor
 
 ---
 
