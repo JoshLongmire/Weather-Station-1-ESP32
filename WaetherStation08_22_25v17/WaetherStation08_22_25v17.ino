@@ -59,8 +59,8 @@ enum PowerMode { MODE_DAY,
                  MODE_NIGHT };
 PowerMode powerMode = MODE_NIGHT;
 
-const uint16_t LUX_ENTER_DAY = 1600;  // enter continuous awake
-const uint16_t LUX_EXIT_DAY = 1400;   // exit to deep-sleep cycling
+uint16_t LUX_ENTER_DAY = 1600;  // enter continuous awake
+uint16_t LUX_EXIT_DAY = 1400;   // exit to deep-sleep cycling
 const uint32_t DWELL_MS = 30000;      // 30 s dwell
 const uint32_t SAMPLE_INTERVAL_MS = 2000;
 
@@ -74,7 +74,7 @@ uint32_t lastSampleMillis = 0;
 uint32_t conditionStartMillis = 0;
 bool trackingBright = false;
 
-const uint32_t LOG_INTERVAL_MS = 600000UL;  // 10 min
+uint32_t LOG_INTERVAL_MS = 600000UL;  // 10 min
 uint32_t nextLogMillis = 0;
 
 // Save number of wakeups across deep sleep
@@ -225,9 +225,22 @@ float computeWetBulbC(float Tc, float RH){
 }
 
 // ===== Config persisted in Preferences ('app' namespace) =====
-struct AppConfig { float altitudeM; bool tempF; bool pressureInHg; float batCal; bool time12h; };
+struct AppConfig {
+  float altitudeM;            // meters
+  bool  tempF;                // true=F, false=C
+  float batCal;               // battery calibration multiplier
+  bool  time12h;              // use 12-hour clock
+  // Tunables for behavior
+  float luxEnterDay;          // lux threshold to enter DAY mode
+  float luxExitDay;           // lux threshold to exit DAY mode
+  uint16_t logIntervalMin;    // CSV logging interval during day (minutes)
+  uint16_t sleepMinutes;      // deep sleep duration between wakes (minutes)
+  float trendThresholdHpa;    // pressure delta threshold (hPa) for trend
+  bool  rainUnitInches;       // true=in/h, false=mm/h
+};
 Preferences appPrefs;
-AppConfig appCfg = { 0.0f, true, false, 1.08f, false };
+AppConfig appCfg = { 0.0f, true, 1.08f, false,
+                     1600.0f, 1400.0f, 10, 10, 0.6f, false };
 
 void loadAppConfig(){
   appPrefs.begin("app", false);
@@ -236,22 +249,39 @@ void loadAppConfig(){
     StaticJsonDocument<256> d; if (deserializeJson(d, cfg)==DeserializationError::Ok){
       appCfg.altitudeM    = d["altitude_m"] | appCfg.altitudeM;
       appCfg.tempF        = d["temp_unit"]  ? (String((const char*)d["temp_unit"]) == "F") : appCfg.tempF;
-      appCfg.pressureInHg = d["pressure_unit"] ? (String((const char*)d["pressure_unit"]) == "inHg") : appCfg.pressureInHg;
+      // pressure unit setting removed; always plot/show both
       appCfg.batCal       = d["bat_cal"] | appCfg.batCal;
       appCfg.time12h      = d["time_12h"] | appCfg.time12h;
+      appCfg.luxEnterDay  = d["lux_enter_day"]  | appCfg.luxEnterDay;
+      appCfg.luxExitDay   = d["lux_exit_day"]   | appCfg.luxExitDay;
+      appCfg.logIntervalMin = d["log_interval_min"] | appCfg.logIntervalMin;
+      appCfg.sleepMinutes = d["sleep_minutes"] | appCfg.sleepMinutes;
+      appCfg.trendThresholdHpa = d["trend_threshold_hpa"] | appCfg.trendThresholdHpa;
+      appCfg.rainUnitInches = d["rain_unit"] ? (String((const char*)d["rain_unit"]) == "in") : appCfg.rainUnitInches;
     }
   }
   // Apply to globals
   batCal = appCfg.batCal;
+  // Apply tunables
+  LUX_ENTER_DAY = (uint16_t)appCfg.luxEnterDay;
+  LUX_EXIT_DAY  = (uint16_t)appCfg.luxExitDay;
+  LOG_INTERVAL_MS = (uint32_t)appCfg.logIntervalMin * 60000UL;
+  // Trend threshold is used by classifier
 }
 
 void saveAppConfig(){
   StaticJsonDocument<256> d;
   d["altitude_m"]    = appCfg.altitudeM;
   d["temp_unit"]     = appCfg.tempF ? "F" : "C";
-  d["pressure_unit"] = appCfg.pressureInHg ? "inHg" : "hPa";
+  // pressure unit removed; keep both in JSON/UI
   d["bat_cal"]       = appCfg.batCal;
   d["time_12h"]      = appCfg.time12h;
+  d["lux_enter_day"]  = appCfg.luxEnterDay;
+  d["lux_exit_day"]   = appCfg.luxExitDay;
+  d["log_interval_min"] = appCfg.logIntervalMin;
+  d["sleep_minutes"]  = appCfg.sleepMinutes;
+  d["trend_threshold_hpa"] = appCfg.trendThresholdHpa;
+  d["rain_unit"] = appCfg.rainUnitInches ? "in" : "mm";
   String out; serializeJson(d, out);
   appPrefs.putString("cfg", out);
 }
@@ -292,7 +322,7 @@ bool getPressureDelta(float hours, float currentP, float* outDelta){
 }
 
 const char* classifyTrendFromDelta(float delta){
-  const float threshold = 0.6f; // hPa
+  const float threshold = appCfg.trendThresholdHpa; // hPa, from config
   if (delta > threshold) return "Rising";
   if (delta < -threshold) return "Falling";
   return "Steady";
@@ -527,9 +557,11 @@ void performLogging() {
       for (uint8_t i=0;i<sizeCopy;i++) { if (nowMs - timesCopy[i] <= 3600000UL) tipsLastHour++; else break; }
       float rainRateMmH = tipsLastHour * MM_PER_TIP;
       const char* gforecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
-      // CSV (reordered): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,boot_count
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.2f,%.1f,%lu\n",
-               timestr, T, H, dewF, hiF, P, trend, gforecast, L, Vbat, gasKOhm, (unsigned long)bootCount);
+      // CSV (reordered): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
+      float rainInHr = rainRateMmH * 0.0393700787f;
+      float rainOut = appCfg.rainUnitInches ? rainInHr : rainRateMmH;
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.2f,%.1f,%.2f,%.2f,%lu\n",
+               timestr, T, H, dewF, hiF, P, trend, gforecast, L, Vbat, gasKOhm, mslp_hPa*0.0295299830714f, rainOut, (unsigned long)bootCount);
       f.close();
       // update in-memory and persisted last log timestamps
       lastSdLogUnix = (uint32_t)nowUnixTs;
@@ -634,9 +666,23 @@ void updateDayNightState() {
 }
 
 void restartHandler() {
-  server.send(200, "text/plain", "Restarting…");
-  delay(100);     // allow TCP flush
-  ESP.restart();  // soft reboot
+  String html;
+  html += "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>";
+  html += "<meta name='viewport' content='width=device-width,initial-scale=1'/>";
+  html += "<title>Restarting…</title>";
+  html += "<style>body{background:#121212;color:#eee;font-family:Arial,sans-serif;margin:0;padding:16px;}";
+  html += ".wrap{max-width:700px;margin:40px auto;text-align:center;}h2{margin:8px 0 12px;}p{opacity:.8;}";
+  html += ".spinner{margin:22px auto;width:36px;height:36px;border:4px solid #333;border-top-color:#3d85c6;border-radius:50%;animation:spin 1s linear infinite;}@keyframes spin{to{transform:rotate(360deg);}}";
+  html += "a.btn,button.btn{display:inline-block;background:#444;padding:10px 12px;border-radius:6px;color:#eee;text-decoration:none;margin:12px 6px 0 0;}";
+  html += "</style></head><body><div class='wrap'>";
+  html += "<h2>Restarting device, please wait…</h2>";
+  html += "<div class='spinner'></div>";
+  html += "<p>This page will try to reconnect automatically.</p>";
+  html += "<script>setTimeout(function(){location.href='/'},8000);</script>";
+  html += "</div></body></html>";
+  server.send(200, "text/html", html);
+  delay(1200);     // allow TCP flush and page render
+  ESP.restart();   // soft reboot
 }
 
 
@@ -934,10 +980,16 @@ void setupServerRoutes() {
     html += "<form method='POST' action='/config'>";
     html += "<div class='grid'>";
     html += "<div><label>Altitude (m)</label><input name='alt' value='" + String(appCfg.altitudeM,1) + "'></div>";
-    html += "<div><label>Temp Unit</label><select name='tu'><option value='F'" + String(appCfg.tempF?" selected":"") + ">F</option><option value='C'" + String(!appCfg.tempF?" selected":"") + ">C</option></select></div>";
-    html += "<div><label>Pressure Unit</label><select name='pu'><option value='hPa'" + String(!appCfg.pressureInHg?" selected":"") + ">hPa</option><option value='inHg'" + String(appCfg.pressureInHg?" selected":"") + ">inHg</option></select></div>";
-    html += "<div><label>Battery Calibration</label><input name='bc' value='" + String(appCfg.batCal,2) + "'></div>";
-    html += "<div><label>Time Format</label><select name='tf'><option value='24'" + String(!appCfg.time12h?" selected":"") + ">24-hour</option><option value='12'" + String(appCfg.time12h?" selected":"") + ">12-hour</option></select></div>";
+    html += "<div><label>Temperature Unit</label><select name='tu'><option value='F'" + String(appCfg.tempF?" selected":"") + ">Fahrenheit</option><option value='C'" + String(!appCfg.tempF?" selected":"") + ">Celsius</option></select></div>";
+    // Pressure unit setting removed; UI shows both Pressure (hPa) and MSLP (inHg)
+    html += "<div><label>Battery Calibration</label><input name='bc' value='" + String(appCfg.batCal,2) + "' title='Multiply measured battery voltage by this factor'></div>";
+    html += "<div><label>Clock Format</label><select name='tf'><option value='24'" + String(!appCfg.time12h?" selected":"") + ">24‑hour</option><option value='12'" + String(appCfg.time12h?" selected":"") + ">12‑hour</option></select></div>";
+    html += "<div><label>Daylight entry (lux)</label><input name='led' value='" + String(appCfg.luxEnterDay,0) + "'></div>";
+    html += "<div><label>Night entry (lux)</label><input name='lxd' value='" + String(appCfg.luxExitDay,0) + "'></div>";
+    html += "<div><label>Log interval (minutes)</label><input name='lim' value='" + String(appCfg.logIntervalMin) + "'></div>";
+    html += "<div><label>Sleep duration (minutes)</label><input name='slm' value='" + String(appCfg.sleepMinutes) + "'></div>";
+    html += "<div><label>Pressure trend threshold (hPa)</label><input name='pth' value='" + String(appCfg.trendThresholdHpa,1) + "'></div>";
+    html += "<div><label>Rain unit</label><select name='ru'><option value='mm'" + String(!appCfg.rainUnitInches?" selected":"") + ">mm/h</option><option value='in'" + String(appCfg.rainUnitInches?" selected":"") + ">in/h</option></select></div>";
     html += "</div><button type='submit'>Save Settings</button></form>";
     html += "<p><a class='btn' href='/'>← Back to Dashboard</a></p>";
     html += "</div></body></html>";
@@ -946,9 +998,15 @@ void setupServerRoutes() {
   server.on("/config", HTTP_POST, [](){
     if (server.hasArg("alt")) appCfg.altitudeM = server.arg("alt").toFloat();
     if (server.hasArg("tu")) appCfg.tempF = (server.arg("tu") == "F");
-    if (server.hasArg("pu")) appCfg.pressureInHg = (server.arg("pu") == "inHg");
+    // Pressure unit setting removed
     if (server.hasArg("bc")) appCfg.batCal = server.arg("bc").toFloat();
     if (server.hasArg("tf")) appCfg.time12h = (server.arg("tf") == "12");
+    if (server.hasArg("led")) appCfg.luxEnterDay = server.arg("led").toFloat();
+    if (server.hasArg("lxd")) appCfg.luxExitDay = server.arg("lxd").toFloat();
+    if (server.hasArg("lim")) appCfg.logIntervalMin = (uint16_t)server.arg("lim").toInt();
+    if (server.hasArg("slm")) appCfg.sleepMinutes = (uint16_t)server.arg("slm").toInt();
+    if (server.hasArg("pth")) appCfg.trendThresholdHpa = server.arg("pth").toFloat();
+    if (server.hasArg("ru")) appCfg.rainUnitInches = (server.arg("ru") == "in");
     saveAppConfig();
     server.sendHeader("Location", "/config", true);
     server.send(302, "text/plain", "");
@@ -1057,6 +1115,11 @@ void handleRoot() {
       <canvas id="pressureChart"></canvas>
     </div>
     <div class="card">
+      <h4>MSLP (Sea Level Pressure)</h4>
+      <div id="mslpVal" class="value">--</div>
+      <canvas id="mslpChart"></canvas>
+    </div>
+    <div class="card">
       <h4>Lux</h4>
       <div id="luxVal" class="value">--</div>
       <canvas id="luxChart"></canvas>
@@ -1081,10 +1144,12 @@ void handleRoot() {
     <div class="card">
       <h4>Dew Point (°F)</h4>
       <div id="dewVal" class="value">--</div>
+      <canvas id="dewChart"></canvas>
     </div>
     <div class="card">
       <h4>Heat Index (°F)</h4>
       <div id="hiVal" class="value">--</div>
+      <canvas id="hiChart"></canvas>
     </div>
     <div class="card">
       <h4>Pressure Trend</h4>
@@ -1095,12 +1160,9 @@ void handleRoot() {
       <div id="forecastVal" class="value">--</div>
     </div>
     <div class="card">
-      <h4>MSLP (Sea Level Pressure)</h4>
-      <div id="mslpVal" class="value">--</div>
-    </div>
-    <div class="card">
       <h4>Wet Bulb Temp (°F)</h4>
       <div id="wbtVal" class="value">--</div>
+      <canvas id="wbtChart"></canvas>
     </div>
     <div class="card">
       <h4>SSID</h4>
@@ -1236,7 +1298,12 @@ function liIonPercent(v){
 // Fetch live readings and update UI + charts
 async function fetchLive() {
   const o = await (await fetch('/live')).json();
-  document.getElementById('tempVal').textContent     = o.temp.toFixed(1);
+  const isF = (o.temp_unit === 'F');
+  document.getElementById('tempVal').textContent     = (o.temp ?? (isF ? o.temp_f : o.temp_c)).toFixed(1);
+  try {
+    const tempHeader = document.getElementById('tempVal').parentElement.querySelector('h4');
+    if (tempHeader) tempHeader.textContent = `Temp (${isF ? 'F' : 'C'})`;
+  } catch (e) { /* noop */ }
   document.getElementById('humVal').textContent      = o.hum.toFixed(1);
   document.getElementById('pressureVal').textContent = o.pressure.toFixed(2);
   document.getElementById('luxVal').textContent      = o.lux.toFixed(0);
@@ -1267,13 +1334,26 @@ async function fetchLive() {
   document.getElementById('wakeVal').textContent = (o.wakeup_cause_text ?? '');
   document.getElementById('alarmVal').textContent = (o.last_alarm ?? '');
   document.getElementById('sdfreeVal').textContent = (o.sd_free_kb ?? 0);
-  document.getElementById('dewVal').textContent = (o.dew_f ?? 0).toFixed(1);
-  document.getElementById('hiVal').textContent = (o.hi_f ?? 0).toFixed(1);
-  document.getElementById('mslpVal').textContent = o.pressure_unit === 'inHg' ?
-    (o.mslp_inHg ?? 0).toFixed(2) : (o.mslp_hPa ?? 0).toFixed(1);
-  document.getElementById('wbtVal').textContent = (o.wbt_f ?? 0).toFixed(1);
+  document.getElementById('dewVal').textContent = (isF ? (o.dew_f ?? 0) : (o.dew_c ?? 0)).toFixed(1);
+  document.getElementById('hiVal').textContent  = (isF ? (o.hi_f  ?? 0) : (o.hi_c  ?? 0)).toFixed(1);
+  document.getElementById('mslpVal').textContent = (o.mslp_inHg ?? 0).toFixed(2);
+  document.getElementById('wbtVal').textContent = (isF ? (o.wbt_f ?? 0) : (o.wbt_c ?? 0)).toFixed(1);
+  try {
+    const dewHdr = document.getElementById('dewVal').parentElement.querySelector('h4');
+    if (dewHdr) dewHdr.textContent = `Dew Point (°${isF ? 'F' : 'C'})`;
+    const hiHdr = document.getElementById('hiVal').parentElement.querySelector('h4');
+    if (hiHdr) hiHdr.textContent = `Heat Index (°${isF ? 'F' : 'C'})`;
+    const wbtHdr = document.getElementById('wbtVal').parentElement.querySelector('h4');
+    if (wbtHdr) wbtHdr.textContent = `Wet Bulb Temp (°${isF ? 'F' : 'C'})`;
+  } catch (e) { /* noop */ }
   if (document.getElementById('rainVal')) {
-    document.getElementById('rainVal').textContent = (o.rain_mmph ?? 0).toFixed(2);
+    const useIn = (o.rain_unit === 'in/h');
+    const val = useIn ? (o.rain_inph ?? (o.rain_mmph ?? 0) * 0.0393700787) : (o.rain_mmph ?? 0);
+    document.getElementById('rainVal').textContent = val.toFixed(2);
+    try {
+      const rainHdr = document.getElementById('rainVal').parentElement.querySelector('h4');
+      if (rainHdr) rainHdr.textContent = `Rain (${useIn ? 'in/h' : 'mm/h'})`;
+    } catch (e) { /* noop */ }
   }
   document.getElementById('trendVal').textContent = (o.pressure_trend ?? '');
   if (document.getElementById('forecastVal')) {
@@ -1295,6 +1375,10 @@ async function fetchLive() {
     temp: o.temp,
     hum: o.hum,
     pressure: o.pressure,
+    mslp: o.mslp_inHg ?? o.mslp_hPa,
+    dew: isF ? (o.dew_f ?? 0) : (o.dew_c ?? 0),
+    hi:  isF ? (o.hi_f  ?? 0) : (o.hi_c  ?? 0),
+    wbt: isF ? (o.wbt_f ?? 0) : (o.wbt_c ?? 0),
     lux: o.lux,
     batt: o.batt,
     voc: (o.voc_kohm ?? 0),
@@ -1302,15 +1386,16 @@ async function fetchLive() {
   });
   if (liveData.length > MAX_POINTS) liveData.shift();
 
-  ['temp','hum','pressure','lux','batt','voc','rain'].forEach(f => {
+  ['temp','hum','pressure','mslp','dew','hi','wbt','lux','batt','voc','rain'].forEach(f => {
     draw(f, f + 'Chart', liveData);
   });
 }
 
 // Generic line‐drawing on a <canvas>
 function draw(field, id, data) {
-  const c = document.getElementById(id),
-        ctx = c.getContext('2d'),
+  const c = document.getElementById(id);
+  if (!c || !c.getContext) return; // Gracefully skip missing canvases
+  const ctx = c.getContext('2d'),
         w = c.width, h = c.height, pad = 20;
   ctx.clearRect(0, 0, w, h);
   if (!data.length) return;
@@ -1461,9 +1546,12 @@ void handleLive() {
   const char* forecast = zambrettiSimple(mslp_hPa, trend);
   const char* generalForecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
 
-  // Build JSON (temp in °F)
+  // Build JSON (temp unit per user setting)
   StaticJsonDocument<768> doc;
-  doc["temp"] = T;
+  doc["temp_f"] = T;
+  doc["temp_c"] = Tc;
+  doc["temp_unit"] = appCfg.tempF ? "F" : "C";
+  doc["temp"] = appCfg.tempF ? T : Tc;
   doc["hum"] = H;
   doc["pressure"] = P;
   doc["lux"] = L;
@@ -1474,6 +1562,8 @@ void handleLive() {
   doc["flash_free_kb"] = flashFreeKB;
   doc["time"] = timestr;  // ← our new timestamp
   doc["rain_mmph"] = rainRateMmH;
+  doc["rain_inph"] = rainRateMmH * 0.0393700787f;
+  doc["rain_unit"] = appCfg.rainUnitInches ? "in/h" : "mm/h";
   // Boot started: compute from current local time minus uptime; format as time only
   {
     struct tm tnow;
@@ -1502,14 +1592,17 @@ void handleLive() {
   doc["last_alarm"] = alarmBuf;
   doc["sd_free_kb"] = sdFreeKB;
   doc["dew_f"] = dewF;
-  doc["hi_f"] = hiF;
+  doc["dew_c"] = dewC;
+  doc["hi_f"]  = hiF;
+  doc["hi_c"]  = (hiF - 32.0f) * 5.0f / 9.0f;
   doc["wbt_f"] = wbtF;
+  doc["wbt_c"] = wbtC;
   doc["mslp_hPa"] = mslp_hPa;
   doc["mslp_inHg"] = mslp_inHg;
   doc["pressure_trend"] = trend;
   doc["forecast"] = forecast;
   doc["general_forecast"] = generalForecast;
-  doc["pressure_unit"] = appCfg.pressureInHg ? "inHg" : "hPa";
+  // pressure unit removed; UI shows both
   // Last SD log time (persisted across deep sleep); format now per preference
   if (lastSdLogUnix != 0) {
     time_t lsu = (time_t)lastSdLogUnix;
@@ -1534,13 +1627,26 @@ void handleLive() {
   if (!loggedThisWake) {
     File f = SD.open("/logs.csv", FILE_APPEND);
     if (f) {
-      // Enhanced CSV with dew, heat index, pressure trend, VOC, and boot count
+      // Write unified 14-column schema: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
       float dewF_once = (computeDewPointC(Tc, H) * 9.0f/5.0f) + 32.0f;
       float hiF_once  = computeHeatIndexF(T, H);
-      const char* trend_once = trend;
+      float mslp_hPa_once = computeMSLP_hPa(P, Tc, appCfg.altitudeM);
+      float mslp_inHg_once = mslp_hPa_once * 0.0295299830714f;
+      // Compute rain rate like performLogging
+      const float MM_PER_TIP = 0.2794f;
+      uint32_t nowMs2 = millis();
+      uint32_t tipsLastHour2 = 0; uint8_t sizeCopy2, headCopy2; uint32_t timesCopy2[128];
+      portENTER_CRITICAL(&rainMux);
+      sizeCopy2 = rainTipSize; headCopy2 = rainTipHead;
+      for (uint8_t i=0;i<sizeCopy2;i++) { int idx = (headCopy2 + 128 - 1 - i) % 128; timesCopy2[i] = rainTipTimesMs[idx]; }
+      portEXIT_CRITICAL(&rainMux);
+      for (uint8_t i=0;i<sizeCopy2;i++) { if (nowMs2 - timesCopy2[i] <= 3600000UL) tipsLastHour2++; else break; }
+      float rainRateMmH_once = tipsLastHour2 * MM_PER_TIP;
+      float rainOut_once = appCfg.rainUnitInches ? (rainRateMmH_once * 0.0393700787f) : rainRateMmH_once;
+      const char* gforecast_once = generalForecastFromSensors(T, H, mslp_hPa_once, trend, rainRateMmH_once, L);
       float gasKOhmOnce = bme.gas_resistance / 1000.0f;
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%.1f,%.2f,%.1f,%lu\n",
-               timestr, T, H, dewF_once, hiF_once, P, trend_once, L, v, gasKOhmOnce, (unsigned long)bootCount);
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.2f,%.1f,%.2f,%.2f,%lu\n",
+               timestr, T, H, dewF_once, hiF_once, P, trend, gforecast_once, L, v, gasKOhmOnce, mslp_inHg_once, rainOut_once, (unsigned long)bootCount);
       f.close();
       // Persist unix timestamp as well for formatting per user preference later
       time_t nowUnixTs = time(nullptr);
@@ -1639,15 +1745,18 @@ void handleViewLogs() {
   // Filter controls
   html += "<div class='filters'>";
   html += "<div class='group'><label>Field</label><select id='fField'>";
-  html += "<option value='1'>Temp (F)</option>";
-  html += "<option value='2'>Hum (%)</option>";
-  html += "<option value='3'>Dew Pt (F)</option>";
-  html += "<option value='4'>Heat Index (F)</option>";
-  html += "<option value='5'>Pressure (hPa)</option>";
-  html += "<option value='7'>Lux</option>";
-  html += "<option value='8'>Battery (V)</option>";
-  html += "<option value='9'>VOC (kΩ)</option>";
-  html += "<option value='10'>Boot Count</option>";
+  // Use actual numeric column indexes from the table (0=Time)
+  html += "<option value='1'>Temp (F)</option>";       // numeric
+  html += "<option value='2'>Hum (%)</option>";        // numeric
+  html += "<option value='3'>Dew Pt (F)</option>";     // numeric
+  html += "<option value='4'>Heat Index (F)</option>"; // numeric
+  html += "<option value='5'>Pressure (hPa)</option>"; // numeric
+  html += "<option value='8'>Lux</option>";            // numeric
+  html += "<option value='9'>Battery (V)</option>";    // numeric
+  html += "<option value='10'>VOC (kΩ)</option>";      // numeric
+  html += "<option value='11'>MSLP (inHg)</option>";   // numeric
+  html += "<option value='12'>Rain</option>";          // numeric, unit shown in header
+  html += "<option value='13'>Boot Count</option>";    // numeric
   html += "</select></div>";
   html += "<div class='group'><label>Type</label><select id='fType'>";
   html += "<option value='between'>Between</option>";
@@ -1662,7 +1771,8 @@ void handleViewLogs() {
 
   // Friendly headers
   html += "<table><thead><tr>";
-  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>Boot Count</th>";
+  String rainHdr = appCfg.rainUnitInches ? "Rain (in/h)" : "Rain (mm/h)";
+  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>MSLP (inHg)</th><th>" + rainHdr + "</th><th>Boot Count</th>";
   html += "</tr></thead><tbody>";
 
   // Skip the CSV header if present
@@ -1671,10 +1781,10 @@ void handleViewLogs() {
 
   for (size_t i = startIdx; i < lines.size(); ++i) {
     String ln = lines[i];
-    // Split by comma into up to 12 fields (forecast placed before lux)
-    String cols[12];
+    // Split by comma into up to 16 fields (supports extended schema)
+    String cols[16];
     int col = 0; int from = 0; int idx;
-    while (col < 11 && (idx = ln.indexOf(',', from)) >= 0) {
+    while (col < 15 && (idx = ln.indexOf(',', from)) >= 0) {
       cols[col++] = ln.substring(from, idx);
       from = idx + 1;
     }
@@ -1693,11 +1803,13 @@ void handleViewLogs() {
       html += "<td></td><td></td>";      // dew, hi empty
       html += "<td>" + cols[3] + "</td>"; // pressure
       html += "<td></td>";               // trend empty
+      html += "<td></td>";               // forecast empty (keeps columns aligned)
       html += "<td>" + cols[4] + "</td>"; // lux
       html += "<td>" + cols[5] + "</td>"; // voltage
       html += "<td></td>";                 // voc empty
+      html += "<td></td>";                 // mslp empty
+      html += "<td></td>";                 // rain empty
       html += "<td></td>";                 // boot_count empty
-      html += "<td></td>";                 // forecast empty
     } else {
       html += "<td>" + cols[3] + "</td>"; // dew_f
       html += "<td>" + cols[4] + "</td>"; // hi_f
@@ -1707,7 +1819,9 @@ void handleViewLogs() {
       html += "<td>" + cols[8] + "</td>";  // lux
       html += "<td>" + cols[9] + "</td>";  // voltage
       html += "<td>" + cols[10] + "</td>"; // voc_kohm
-      html += "<td>" + cols[11] + "</td>"; // boot_count
+      html += "<td>" + (col>11?cols[11]:String("")) + "</td>"; // mslp_inHg
+      html += "<td>" + (col>12?cols[12]:String("")) + "</td>"; // rain (unit per setting at write time)
+      html += "<td>" + (col>13?cols[13]:String("")) + "</td>"; // boot_count
     }
     html += "</tr>";
   }
@@ -1720,9 +1834,9 @@ void handleViewLogs() {
   html += "<script>function computeColMinMax(f){var tb=document.querySelector('tbody');if(!tb)return null;var mn=Infinity,mx=-Infinity,has=false;for(var i=0;i<tb.rows.length;i++){var c=tb.rows[i].cells[f];if(!c)continue;var v=parseFloat(c.textContent);if(isNaN(v))continue;has=true;if(v<mn)mn=v;if(v>mx)mx=v;}if(!has)return null;return {min:mn,max:mx};}</script>";
   html += "<script>function setMinFromColumn(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMin').value=mm.min;}</script>";
   html += "<script>function setMaxFromColumn(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMax').value=mm.max;}</script>";
-  html += "<script>function autoRange(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMin').value=mm.min;document.getElementById('fMax').value=mm.max;applyFilter();}</script>";
+  html += "<script>function autoRange(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMin').value=mm.min;document.getElementById('fMax').value=mm.max;/* ensure type is between for auto */document.getElementById('fType').value='between';applyFilter();}</script>";
   // Initialize from URL query parameters and auto-apply if present
-  html += "<script>(function(){try{var p=new URLSearchParams(location.search);if(!p)return;var fieldMap={temp:1,temperature:1,hum:2,humidity:2,dew:3,dew_f:3,hi:4,heat:4,heat_index:4,pressure:5,lux:7,bat:8,batv:8,battery:8,voc:9,boot:10,boots:10,boot_count:10};var fld=p.get('field');if(fld){var v=fieldMap[fld.toLowerCase()];if(!v&&/^[0-9]+$/.test(fld))v=parseInt(fld,10);if(v)document.getElementById('fField').value=String(v);}var type=p.get('type');if(type){var t=type.toLowerCase();if(t==='gte'||t==='lte'||t==='between'){document.getElementById('fType').value=t;}}if(p.has('min')){document.getElementById('fMin').value=p.get('min');}if(p.has('max')){document.getElementById('fMax').value=p.get('max');}if(p.has('field')||p.has('min')||p.has('max')||p.has('type')){applyFilter();}}catch(e){}})();</script>";
+  html += "<script>(function(){try{var p=new URLSearchParams(location.search);if(!p)return;var fieldMap={temp:1,temperature:1,hum:2,humidity:2,dew:3,dew_f:3,hi:4,heat:4,heat_index:4,pressure:5,lux:8,light:8,illuminance:8,bat:9,batv:9,battery:9,voc:10,gas:10,mslp:11,slp:11,sea_level:11,rain:12,boot:13,boots:13,boot_count:13};var fld=p.get('field');if(fld){var v=fieldMap[fld.toLowerCase()];if(!v&&/^[0-9]+$/.test(fld))v=parseInt(fld,10);if(v)document.getElementById('fField').value=String(v);}var type=p.get('type');if(type){var t=type.toLowerCase();if(t==='gte'||t==='lte'||t==='between'){document.getElementById('fType').value=t;}}if(p.has('min')){document.getElementById('fMin').value=p.get('min');}if(p.has('max')){document.getElementById('fMax').value=p.get('max');}if(p.has('field')||p.has('min')||p.has('max')||p.has('type')){applyFilter();}}catch(e){}})();</script>";
   html += "</div></body></html>";
   server.sendHeader("Cache-Control", "no-store, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
@@ -1771,7 +1885,8 @@ void handleReset() {
 
   File f = SD.open("/logs.csv", FILE_WRITE);
   if (f) {
-    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,boot_count");
+    // Unified 14-column schema (includes rain)
+    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count");
     f.close();
   } else {
     Serial.println("❌ Failed to recreate logs.csv");
@@ -1782,8 +1897,20 @@ void handleReset() {
 }  // ← Make sure this closing brace ends handleReset
 
 void handleSleep() {
-  server.send(200, "text/html", "<p>Sleeping for 10 minutes…</p>");
-  delay(200);
+  String html;
+  html += "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>";
+  html += "<meta name='viewport' content='width=device-width,initial-scale=1'/>";
+  html += "<title>Sleeping…</title>";
+  html += "<style>body{background:#121212;color:#eee;font-family:Arial,sans-serif;margin:0;padding:16px;}";
+  html += ".wrap{max-width:700px;margin:40px auto;text-align:center;}h2{margin:8px 0 12px;}p{opacity:.8;}";
+  html += ".spinner{margin:22px auto;width:36px;height:36px;border:4px solid #333;border-top-color:#3d85c6;border-radius:50%;animation:spin 1s linear infinite;}@keyframes spin{to{transform:rotate(360deg);}}";
+  html += "</style></head><body><div class='wrap'>";
+  html += "<h2>The device will go to sleep to save power</h2>";
+  html += "<p>10 minutes starting now…</p>";
+  html += "<div class='spinner'></div>";
+  html += "</div></body></html>";
+  server.send(200, "text/html", html);
+  delay(1000);
   blinkStatus(3, 200);
 
   if (rtcOkFlag) {
