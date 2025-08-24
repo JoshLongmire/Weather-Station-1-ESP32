@@ -61,6 +61,8 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 If no saved networks are found, the ESP32 launches a **temporary AP** for ~3 minutes so you can add Wi‑Fi credentials at `/add`.
 
+Default AP: SSID `WeatherStation1`, password `12345678`.
+
 ### Prerequisites
 
 - **Arduino IDE** (or PlatformIO)
@@ -101,12 +103,17 @@ After boot and Wi‑Fi join, open:
 | `/add`          | POST   | Add Wi‑Fi SSID/password                       |
 | `/del?ssid=…`   | GET    | Delete a saved SSID                           |
 | `/live`         | GET    | JSON telemetry & diagnostics                  |
+| `/sleep`        | POST   | Enter deep sleep immediately                  |
+| `/restart`      | GET/POST | Soft reboot                                 |
 
 ### Example `/live` JSON (selected fields)
 
 ```json
 {
+  "temp_unit": "F",
   "temp": 72.8,
+  "temp_f": 72.8,
+  "temp_c": 22.7,
   "hum": 43.2,
   "pressure": 1013.62,
   "lux": 455,
@@ -119,15 +126,45 @@ After boot and Wi‑Fi join, open:
   "mslp_inHg": 30.10,
   "pressure_trend": "Steady",
   "forecast": "Fair",
+  "general_forecast": "Improving / Fair",
   "rain_mmph": 0.28,
+  "rain_inph": 0.01,
+  "rain_unit": "mm/h",
   "boot_count": 123,
   "uptime": 1234,
   "rssi": -56,
   "ssid": "MyWiFi",
+  "time": "2025-01-01 15:42:17",
+  "last_sd_log": "2025-01-01 15:40:00",
+  "boot_started": "15:21:43",
+  "wakeup_cause": 2,
+  "wakeup_cause_text": "TIMER",
+  "last_alarm": "2025-01-01 15:50:00",
+  "sd_free_kb": 512000,
+  "flash_free_kb": 2048,
+  "heap": 176520,
   "sd_ok": true,
   "rtc_ok": true
 }
 ```
+
+---
+
+## CSV log schema
+
+File: `/logs.csv`
+
+Header (14 columns):
+```
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
+```
+
+Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
+```
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,4.07,12.5,30.10,0.28,123
+```
+
+Note: After the initial startup log, an extra boot event row is appended containing only the timestamp and `boot_count` (other columns blank).
 
 ---
 
@@ -148,6 +185,11 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
 - `bat_cal` — ADC voltage calibration multiplier  
 - `time_12h` — 12h or 24h display toggle  
 - `rain_unit` — `mm/h` or `in/h` for log/UI rain values  
+ - `lux_enter_day` — Daylight entry (lux). Default: 1600  
+ - `lux_exit_day` — Night entry (lux). Default: 1400  
+ - `log_interval_min` — Log interval (minutes) while awake. Default: 10  
+ - `sleep_minutes` — Deep sleep duration (minutes) between wakes. Default: 10  
+ - `trend_threshold_hpa` — Pressure trend threshold (hPa). Default: 0.6  
 
 Wi‑Fi networks are managed via:
 

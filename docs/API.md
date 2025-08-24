@@ -61,7 +61,10 @@ Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://WeatherStation1.lo
 Example:
 ```json
 {
+  "temp_unit": "F",
   "temp": 72.8,
+  "temp_f": 72.8,
+  "temp_c": 22.7,
   "hum": 43.2,
   "pressure": 1013.62,
   "lux": 455,
@@ -72,6 +75,8 @@ Example:
   "flash_free_kb": 2048,
   "time": "2025-01-01 15:42:17",
   "rain_mmph": 0.28,
+  "rain_inph": 0.01,
+  "rain_unit": "mm/h",
   "boot_started": "15:21:43",
   "sd_ok": true,
   "rtc_ok": true,
@@ -83,21 +88,25 @@ Example:
   "last_alarm": "2025-01-01 15:50:00",
   "sd_free_kb": 512000,
   "dew_f": 50.3,
+  "dew_c": 10.2,
   "hi_f": 73.9,
+  "hi_c": 23.3,
   "wbt_f": 54.4,
+  "wbt_c": 12.4,
   "mslp_hPa": 1019.3,
   "mslp_inHg": 30.10,
   "pressure_trend": "Steady",
   "forecast": "Fair",
-  "pressure_unit": "hPa"
+  "general_forecast": "Improving / Fair",
+  "last_sd_log": "2025-01-01 15:40:00"
 }
 ```
 
 - Units:
-  - Temperature in this endpoint is °F.
-  - `pressure_unit` reports preferred unit for MSLP cards (`hPa` or `inHg`).
+  - Temperature fields include both °F and °C; `temp_unit` indicates UI preference.
+  - Pressure includes station pressure (`pressure`, hPa) and MSLP (`mslp_hPa`, `mslp_inHg`).
   - Battery is pack voltage (single-cell Li‑ion) in volts.
-  - `rain_mmph` is instantaneous rate based on tips in last hour.
+  - Rain rate is provided in mm/h and in/h; `rain_unit` indicates current CSV/UI unit.
 
 cURL example:
 ```bash
@@ -124,7 +133,13 @@ curl -LOJ http://WeatherStation1.local/download
   - `temp_unit` (`F` or `C`) — UI formatting preference
   - `bat_cal` (float) — multiplier for battery calibration
   - `time_12h` (bool via form select: `12` → true, `24` → false)
-  - `rain_unit` (`mm/h` or `in/h`) — units for the `rain` column and UI label
+  - Light thresholds and timing:
+    - `lux_enter_day` — enter DAY mode; default 1600
+    - `lux_exit_day` — enter NIGHT mode; default 1400
+    - `log_interval_min` — CSV cadence while awake; default 10
+    - `sleep_minutes` — deep sleep duration between wakes; default 10
+    - `trend_threshold_hpa` — pressure Δ threshold; default 0.6
+  - `rain_unit` (`mm` or `in`) — unit used for rain rate in CSV/UI
 
 ### POST `/config`
 - Saves settings to Preferences namespace `app`.
@@ -134,9 +149,14 @@ Example:
 curl -X POST \
   -F alt=123.4 \
   -F tu=F \
-  -F pu=hPa \
   -F bc=1.08 \
   -F tf=24 \
+  -F led=1600 \
+  -F lxd=1400 \
+  -F lim=10 \
+  -F slm=10 \
+  -F pth=0.6 \
+  -F ru=mm \
   http://WeatherStation1.local/config -i
 ```
 
@@ -197,9 +217,14 @@ Namespace: `app`. Stored as a JSON string under key `cfg`.
 Fields:
 - `altitude_m` (float)
 - `temp_unit` (`F`|`C`)
-- `pressure_unit` (`inHg`|`hPa`)
 - `bat_cal` (float)
 - `time_12h` (bool)
+- `lux_enter_day` (number)
+- `lux_exit_day` (number)
+- `log_interval_min` (integer)
+- `sleep_minutes` (integer)
+- `trend_threshold_hpa` (float)
+- `rain_unit` (`in`|`mm`)
 
 Wi‑Fi configuration is under namespace `wifi`, key `config`, containing `{"networks": [{"ssid":"...","pass":"..."}, ...]}`.
 
@@ -236,9 +261,9 @@ All functions are defined within the main `.ino`. Key functions and their roles:
 - `float readLux()` — Reads lux from VEML7700, clamps invalid values to 0.
 - `void performLogging()` — On schedule, reads BME680 and battery, computes derived metrics, updates pressure history/trend, appends a CSV row, and updates `lastSdLogUnix`/`lastSdLogTime`.
 - `void updateDayNightState()` — Debounced, averaged light-based state machine to transition between DAY/NIGHT and trigger sleep.
-- `void updateStatusLed()` — Centralized status LED behavior for AP/connected/attempting and non-blocking pulse overrides.
+- `void updateStatusLed()` — Centralized status LED behavior for AP/connected/attempting and non-blocking pulse overrides; calm when disconnected in day/night.
 - `void blinkStatus(int times, int durationMs)` — Schedules non-blocking LED pulses handled by `updateStatusLed()`.
-- `void prepareDeepSleep(uint32_t wakeAfterSeconds)` — Programs DS3231 alarm and ESP32 timer wake, stores `lastAlarmUnix`, and enters deep sleep.
+- `void prepareDeepSleep(uint32_t wakeAfterSeconds)` — Programs DS3231 alarm (A1 minute match) and ESP32 timer wake, stores `lastAlarmUnix`, and enters deep sleep.
 
 ### Time, Pressure History, Forecast
 - `void loadAppConfig()` / `void saveAppConfig()` — Read/write `AppConfig` struct to/from Preferences.
@@ -264,6 +289,8 @@ All functions are defined within the main `.ino`. Key functions and their roles:
 - `last_sd_log` in `/live` is formatted per the 12/24‑hour preference; raw unix is persisted in `RTC_DATA_ATTR`.
 - If DS3231 is unavailable, wake is timer-only and `rtc_ok` will be `false`.
 - LED behavior is calm by default when disconnected; use `blinkStatus()` to signal events.
+
+AP fallback: SSID `WeatherStation1`, password `12345678`.
 
 ## Integration Recipes
 - **Polling telemetry**: fetch `/live` every 2–10 s and ingest JSON.
