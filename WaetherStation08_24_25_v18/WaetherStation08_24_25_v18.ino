@@ -375,7 +375,7 @@ static const char* generalForecastFromSensors(float tempF, float hum,
 
   // Otherwise, neutral
   if (hum > 85.0f) return "Humid / Overcast";
-  return "Changeable";
+  return "Neutral";
 }
 
 void blinkStatus(int times, int durationMs) {

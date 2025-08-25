@@ -1,0 +1,38 @@
+---
+alwaysApply: true
+description: API and CSV schema contract for ESP32 Weather Station; extend-only policy
+---
+
+## Public API and CSV Contract
+
+Reference files:
+- Main sketch: [WaetherStation08_22_25v17.ino](mdc:WaetherStation08_22_25v17/WaetherStation08_22_25v17.ino)
+- API docs: [docs/API.md](mdc:docs/API.md)
+
+### /live JSON
+- Treat existing keys as stable. Add new fields only; never rename or remove.
+- Keep payload typically under 1.5 KB; use short names and provide units as separate fields only when needed.
+- Always include health booleans for optional subsystems: `sd_ok`, `rtc_ok`.
+- Preserve these core fields and meanings:
+  - `temp_unit`, `temp`, `temp_f`, `temp_c`, `hum`, `pressure`, `lux`, `batt`, `voc_kohm`
+  - Derived: `dew_f|dew_c`, `hi_f|hi_c`, `wbt_f|wbt_c`, `mslp_hPa`, `mslp_inHg`, `pressure_trend`, `forecast`, `general_forecast`
+  - Rain: `rain_mmph`, `rain_inph`, `rain_unit`
+  - System: `uptime`, `heap`, `flash_free_kb`, `time`, `boot_started`, `boot_count`, `rssi`, `ssid`, `wakeup_cause`, `wakeup_cause_text`, `last_alarm`, `last_sd_log`, `sd_free_kb`
+- If a sensor is absent, set a sane default (0, NaN guarded to 0, or empty string) and keep the field present.
+
+### CSV `/logs.csv`
+- Preserve header order exactly; append new columns only at the end:
+  `timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count`
+- Do not change existing column names or ordering. If new metrics are logged, extend at the end and update `/view-logs` accordingly.
+- Write one data row per cadence event; during a boot, an additional "boot event" line may be appended with blanks for numeric fields.
+- Pressure units are hPa; MSLP column is in inHg.
+- Rain column uses current unit (mm/h or in/h) per `rain_unit` setting.
+
+### Preferences and Backward Compatibility
+- Preferences stored as JSON string in namespace `app` key `cfg` must tolerate missing keys and write all keys on save.
+- When adding settings, update `AppConfig`, `loadAppConfig()`, `saveAppConfig()`, `/config` GET/POST UI.
+- Never break existing dashboards/clients; defaults must preserve previous behavior.
+
+### Web/UI Notes
+- Dashboard `/` relies on `/live` field presence and names; update labels dynamically but keep ids stable.
+- Keep client JS lightweight; avoid adding heavy libraries.

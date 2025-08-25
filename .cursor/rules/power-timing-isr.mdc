@@ -1,0 +1,46 @@
+---
+alwaysApply: true
+description: Power model, timing, ISR, and logging cadence constraints for ESP32 Weather Station
+---
+
+## Power Model, Timing, and ISR Rules
+
+Reference files:
+- Main sketch: [WaetherStation08_22_25v17.ino](mdc:WaetherStation08_22_25v17/WaetherStation08_22_25v17.ino)
+
+### Modes and Windows
+- Two modes: `MODE_DAY` (stay awake, periodic logging) and `MODE_NIGHT` (short serve window → deep sleep).
+- Serve windows:
+  - Cold boot/undefined wake: `UPTIME_STARTUP` (30 min), then a fixed `UPTIME_CONFIG` (2 min) decision run.
+  - RTC/TIMER wakes: `UPTIME_CONFIG` (2 min).
+- Enter sleep only via `prepareDeepSleep(seconds)` which programs RTC A1 minute match when RTC is OK and always enables a timer wake; turn LED off before sleep.
+
+### Day/Night Decisioning
+- Light-based with hysteresis and dwell using VEML7700:
+  - Enter DAY: average lux ≥ `LUX_ENTER_DAY` sustained for `DWELL_MS`.
+  - Exit DAY: average lux ≤ `LUX_EXIT_DAY` sustained for `DWELL_MS`.
+- During the initial 30‑minute window, sample lux but do not transition modes; decisions resume after the window.
+- New work must not introduce blocking delays; piggyback on existing sampling at `SAMPLE_INTERVAL_MS`.
+
+### ISR and Shared State
+- ISRs must be short, in IRAM (`IRAM_ATTR`), and avoid heap/Serial/long math.
+- Protect shared state with `portENTER_CRITICAL`/`portEXIT_CRITICAL` when copying from tasks.
+- Rain gauge: use the existing 128‑entry ring buffer; any rate computation must first copy timestamps under a critical section.
+
+### Logging Cadence and SD I/O
+- All periodic SD writes should flow through `performLogging()` and respect `LOG_INTERVAL_MS` scheduling.
+- Keep SD writes compact; avoid large `String` concatenations in tight loops; always `close()` files.
+- On sleep boundaries (sunset or end of serve window), perform a final `performLogging()` before calling `prepareDeepSleep()`.
+
+### Timekeeping and RTC
+- Prefer DS3231 when present; expose `rtc_ok` and store `lastAlarmUnix`.
+- Daily NTP resync around 02:00 local time with drift check and optional RTC adjust when delta > 5 s.
+- Respect user 12/24‑hour preference when formatting times for UI/CSV.
+
+### LED and UX
+- Use `updateStatusLed()` unified behavior; keep calm when disconnected outside of AP mode.
+- Use `blinkStatus()` for event signaling; avoid `delay()` in `loop()` for LED.
+
+### Extensions
+- When adding periodic tasks, integrate via existing `loop()` cadence and guards; avoid adding new timers or deep nesting.
+- If adding new peripherals, gate with feature flags and expose a boolean health field in `/live`.

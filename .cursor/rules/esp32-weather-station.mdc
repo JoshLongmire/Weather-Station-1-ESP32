@@ -1,0 +1,91 @@
+---
+alwaysApply: true
+description: Stable firmware guardrails and navigation for ESP32 Weather Station (Arduino IDE 2.3.6, ESP32 DevKit v1)
+globs: *.ino,*.cpp,*.h
+---
+
+## ESP32 Weather Station – Cursor Rules
+
+Reference files:
+- Main sketch: [WaetherStation08_22_25v17.ino](mdc:WaetherStation08_22_25v17/WaetherStation08_22_25v17.ino)
+- README: [README.md](mdc:README.md)
+- API & schema: [docs/API.md](mdc:docs/API.md)
+
+### Build and environment
+- Target: Arduino IDE 2.3.6, board "ESP32 Dev Module" (ESP32 DevKit v1).
+- Language: Arduino C++ (ESP32 core). Keep code portable to classic ESP32; avoid ESP32‑S3/IDF‑only APIs unless guarded with `#ifdef`.
+- Libraries already in use (prefer these; document any additions in `README.md`):
+  - Core: `WiFi`, `WebServer`, `ESPmDNS`, `SPI`, `SD`, `Preferences`, `Wire`, `time.h`.
+  - Sensors: `Adafruit_BME680`, `Adafruit_Unified_Sensor`, `Adafruit_VEML7700`, `RTClib`.
+  - Utility: `ArduinoJson`, `ElegantOTA`.
+- Do not introduce blocking watchdog‑risky code in `loop()`; keep new work non‑blocking or time‑sliced.
+
+### Project anchors and invariants
+- HTTP endpoints and schemas are defined by handlers in the main sketch. Treat `/live` JSON and `/logs.csv` header as a stable API.
+  - JSON: Only add new fields; never rename or remove existing ones. Ensure defaults when sensors are absent.
+  - CSV: Preserve header order: `timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count`. Append new columns only at the end and update the log viewer accordingly.
+- Persistent settings (`Preferences` namespace `app`) are stored as a JSON string. When adding settings:
+  - Extend `AppConfig`, update `loadAppConfig()` and `saveAppConfig()` with backward‑compatible defaults.
+  - Update `/config` GET/POST form fields and help text.
+- Power model (DAY/NIGHT) and timing:
+  - Respect `UPTIME_STARTUP`/`UPTIME_CONFIG` windows and `updateDayNightState()` decisions.
+  - Use `prepareDeepSleep()` to enter sleep; it programs RTC/timer and ensures LED off.
+
+### Concurrency, ISR, and timing rules
+- ISRs must be extremely short and placed in IRAM (`IRAM_ATTR`). No heap allocation, no `Serial`, no long math.
+- Shared ISR state must be `volatile` and protected with `portENTER_CRITICAL`/`portEXIT_CRITICAL` when copied in tasks.
+- New periodic work should piggyback on existing cadence mechanisms:
+  - Use `performLogging()` cadence (`LOG_INTERVAL_MS`) for SD writes.
+  - For UI refresh, use the `/live` handler rather than adding timers in `loop()`.
+- Do not add long `delay()` calls. Use millisecond scheduling with `millis()` comparisons.
+
+### Sensor and I/O guidelines
+- Initialize I²C devices after `Wire.begin(I2C_SDA, I2C_SCL)` and check return codes. Gate usage by an `*_Ok` boolean.
+- BME680: call `performReading()` before accessing fields. VEML7700: guard against `NaN`/negative lux.
+- ADC battery reading must maintain attenuation and averaging approach; keep `batCal` multiplier configurable.
+- SD card I/O:
+  - Always check `SD.begin()` and handle `SD.exists("/logs.csv")` safely.
+  - Use `FILE_APPEND`/`FILE_WRITE` and always `close()` files.
+  - Keep log writes compact; avoid large `String` concatenations in tight loops.
+
+### Web/UI & OTA
+- Keep `/` dashboard responsive; avoid adding heavy inline scripts. Favor small, client‑side canvas charts already present.
+- `/live` should remain < 1.5 KB JSON typical. When adding fields, keep names short and include units in separate fields only if necessary.
+- Preserve `/update` (ElegantOTA) with basic auth; if changing credentials, reflect in `README.md`.
+- mDNS host is `WeatherStation1`. If you change it per device, update all occurrences and documentation.
+
+### Stability and error handling
+- Prefer guard clauses and early returns. Check pointers/handles and return on failure.
+- Never crash the main loop for optional peripherals; report status via `/live` (e.g., `sd_ok`, `rtc_ok`).
+- When adding new subsystems, expose a boolean health field in `/live` and degrade gracefully if absent.
+
+### Naming and code style
+- Use descriptive names (no 1–2 letter identifiers). Functions are verbs; variables are nouns.
+- Avoid deep nesting; handle errors first. Only add comments for non‑obvious logic.
+- Match existing formatting; do not reformat unrelated code. Avoid inline explanatory comments; place brief comments above complex blocks.
+
+### Extensibility patterns
+- Feature flags: prefer `#define ENABLE_<FEATURE>` blocks near the top of the sketch for optional hardware (e.g., alternate sensors). Ensure all code compiles with flags off.
+- New modules: place reusable logic in `.h/.cpp` files and include from the main sketch. Keep external APIs small and explicit.
+- Data model: for new derived metrics, compute once per cycle and reuse across logging and `/live` to avoid duplication.
+- Backward compat:
+  - Config: tolerate missing keys; write all keys on save.
+  - Logs: keep existing columns intact; when adding, update `/view-logs` tables and filters.
+
+### Testing checklist for edits
+Before merging any edit, verify:
+- Compiles for ESP32 DevKit v1 in Arduino IDE 2.3.6 with current libraries.
+- Boots with no SD present (graceful), no RTC present (timer fallback), and no sensors (status flags false) without crash.
+- `/live` responds within ~50 ms and includes all required fields.
+- CSV header present after reset; rows appended once per wake (respect `loggedThisWake`).
+- Deep sleep triggers after serve windows in NIGHT mode; DAY mode continues periodic logging.
+
+### Known integration points
+- Day/Night thresholds and dwell are set via Preferences and exposed on `/config`.
+- Pressure trend uses hourly history persisted in `RTC_DATA_ATTR`; the classifier threshold comes from Preferences.
+- Rain gauge ISR uses a 128‑entry ring buffer of millisecond timestamps; compute rates by copying under a critical section.
+
+### Security notes
+- OTA and AP credentials are static in the sketch. Change before deployment and document changes.
+- All endpoints are HTTP; assume trusted LAN. Do not add secrets to logs or `/live`.
+
