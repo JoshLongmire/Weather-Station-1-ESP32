@@ -3,7 +3,8 @@
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
 
 <p align="center">
-  <img alt="ESP32 Weather Station" src="docs/hero.png" width="640">
+  <img alt="ESP32 Weather Station" src="docs/hero.png" width="48%">
+  <img alt="ESP32 Weather Station (alt)" src="docs/hero1.jpg" width="48%">
 </p>
 
 ---
@@ -13,7 +14,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 - **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
 - **Time:** DS3231 RTC (preferred) with NTP fallback
-- **Connectivity:** Wi‑Fi Station with AP fallback, mDNS
+- **Connectivity:** Wi‑Fi Station with AP fallback, mDNS (configurable hostname)
 - **Web UI:** Live dashboard, charts, log viewer & download
 - **REST API:** `/live`, `/download`, `/view-logs`, `/config`, `/add`, `/del`, etc.
 - **Power modes:** DAY (awake, periodic logs) / NIGHT (short serve window → deep sleep)
@@ -89,7 +90,7 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
 
 After boot and Wi‑Fi join, open:
 
-**http://WeatherStation1.local**
+**http://<mdnsHost>.local** (default: `weatherstation1.local`)
 
 ### Endpoints
 
@@ -190,6 +191,7 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
  - `log_interval_min` — Log interval (minutes) while awake. Default: 10  
  - `sleep_minutes` — Deep sleep duration (minutes) between wakes. Default: 10  
  - `trend_threshold_hpa` — Pressure trend threshold (hPa). Default: 0.6  
+ - `mdns_host` — mDNS hostname label (no `.local`)  
 
 Wi‑Fi networks are managed via:
 
@@ -217,16 +219,17 @@ Wi‑Fi networks are managed via:
 ## Roadmap (ideas)
 
 - Optional AQ modules: MiCS‑5524, SCD41  
-- UV sensing: S12SD  
-- Power metering: INA3221  
-- Wind subsystem: wind vane, accelerometer  
-- Solar/charging: 900 mA MPPT controller
+- Power metering: INA3221 (I have Just need to weire)
+- Wind subsystem: wind vane, accelerometer  (I have hall sensors)
 - RGB LED Status debugging
-- adding, Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna, Dual Type-C, WiFi & Bluetooth– Compatible with      
-MicroPython & ESP-IDF N16R8 (16MB +Antenna Gold Edition)
-- INA3221 Current Power Voltage Monitor
+(16MB +Antenna Gold Edition)
 
 ---
+
+## Implemented Hardware
+- UV sensing: S12SD UV Index added
+- Solar/charging: 900 mA MPPT controller (Efficiency approved)
+- Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)
 
 ## Credits
 

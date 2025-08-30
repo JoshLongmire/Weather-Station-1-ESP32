@@ -49,7 +49,7 @@ Notes:
 - `rain` column is written in mm/h or in/h depending on the current unit setting.
 
 ## HTTP API
-Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://WeatherStation1.local` if supported.
+Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` (configurable in `/config`).
 
 ### GET `/`
 - Returns the live dashboard HTML with cards, charts, and Wi‑Fi management UI.
@@ -68,6 +68,8 @@ Example:
   "hum": 43.2,
   "pressure": 1013.62,
   "lux": 455,
+  "uv_mv": 320,
+  "uv_index": 3.2,
   "batt": 4.07,
   "voc_kohm": 12.5,
   "uptime": 1234,
@@ -208,7 +210,7 @@ xdg-open http://WeatherStation1.local/update
 ```
 
 ## mDNS
-- Service attempts to register at `WeatherStation1.local`.
+- Service registers at `<mdnsHost>.local` (defaults to `weatherstation1.local`, configurable).
 - If mDNS fails, use the device IP printed on serial on connect.
 
 ## Persistent Configuration (Preferences)
@@ -225,6 +227,8 @@ Fields:
 - `sleep_minutes` (integer)
 - `trend_threshold_hpa` (float)
 - `rain_unit` (`in`|`mm`)
+- `mdns_host` (string)
+- `mdns_host` (string) — mDNS host label (no `.local`)
 
 Wi‑Fi configuration is under namespace `wifi`, key `config`, containing `{"networks": [{"ssid":"...","pass":"..."}, ...]}`.
 

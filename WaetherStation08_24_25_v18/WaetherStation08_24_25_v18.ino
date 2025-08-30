@@ -16,9 +16,25 @@
 #include <esp_system.h>  // for esp_restart()
 #include <RTClib.h>      // DS3231 RTC driver
 #include "driver/rtc_io.h"
+#include <math.h>        // for isfinite()
 // for logs page rendering
 #include <vector>
 //#include <Adafruit_SGP40.h>        // 🌬 VOC sensor
+
+// —— Optional: Bosch BSEC2 library for BME680 IAQ/eCO2/bVOC ——
+#ifndef ENABLE_BSEC2
+#define ENABLE_BSEC2 1
+#endif
+#if ENABLE_BSEC2
+  #if __has_include(<bsec2.h>)
+    #include <bsec2.h>
+    #define HAVE_BSEC2_LIB 1
+  #else
+    #warning "BSEC2 enabled but library header not found. IAQ/eCO2/bVOC will be disabled."
+    #undef ENABLE_BSEC2
+    #define ENABLE_BSEC2 0
+  #endif
+#endif
 
 
 // —— Pin & Address Definitions ——
@@ -27,14 +43,16 @@
 //#define FAN_PIN 12  // choose any free GPIO--------------------------------------un// when installed
 #define RTC_INT_PIN GPIO_NUM_2
 #define SD_CS 5         // change to your CS pin
-#define SD_SCK_PIN 18   // VSPI default SCK
-#define SD_MISO_PIN 19  // VSPI default MISO
-#define SD_MOSI_PIN 23  // VSPI default MOSI
-#define I2C_SDA 21
-#define I2C_SCL 22
-#define ADC_BATTERY_PIN 35
+#define SD_SCK_PIN 12   // VSPI default SCK
+#define SD_MISO_PIN 13  // VSPI default MISO
+#define SD_MOSI_PIN 11  // VSPI default MOSI
+#define I2C_SDA 8
+#define I2C_SCL 9
+#define ADC_BATTERY_PIN 4
 // Rain gauge tipping bucket (reed switch to GND)
-#define RAIN_PIN 27
+#define RAIN_PIN 18
+// UV sensor GUVA-S12SD analog output
+#define UV_PIN 6
 //#define MQ135_PIN          34       // ADC1_CH6 (analog gas)
 //#define MICS5524_PIN       35       // ADC1_CH7 (analog gas)
 //#define SOLAR_IN_PIN       32       // ADC1_CH4 (DFRobot Solar IN)+
@@ -94,7 +112,7 @@ Adafruit_VEML7700 lightMeter;
 unsigned long startMillis;
 unsigned long serveWindow;
 static bool loggedThisWake = false;
-const uint8_t STATUS_LED_PIN = 4;
+const uint8_t STATUS_LED_PIN = 37;
 const uint32_t BLINK_INTERVAL = 500;  // blink every 500 ms
 unsigned long lastBlink = 0;
 bool blinkState = LOW;
@@ -122,6 +140,31 @@ volatile uint32_t lastRainTipMs = 0;
 const uint32_t RAIN_DEBOUNCE_MS = 150;
 // Critical section guard for ISR/task access
 portMUX_TYPE rainMux = portMUX_INITIALIZER_UNLOCKED;
+
+// —— BSEC2 globals ——
+#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
+  Bsec2 bsec;           // main BSEC2 instance
+  bool bsecOk = false;  // health flag
+  float iaq = 0.0f;     // IAQ index
+  float eco2 = 0.0f;    // ppm (estimated)
+  float bvoc = 0.0f;    // bVOC equivalent (ppm)
+  // Provide BSEC2 configuration blob for 3.3V, LP (3s) profile, new sensor (~4d)
+  static const uint8_t BSEC2_CONFIG_33V_3S_4D[] = {
+  #if __has_include("config/bme680/bme680_iaq_33v_3s_4d/bsec_iaq.txt")
+  #include "config/bme680/bme680_iaq_33v_3s_4d/bsec_iaq.txt"
+  #else
+  #include "data/bsec2/src/config/bme680/bme680_iaq_33v_3s_4d/bsec_iaq.txt"
+  #endif
+  };
+  // BSEC state persistence
+  Preferences bsecPrefs;
+  uint8_t bsecStateBuf[BSEC_MAX_STATE_BLOB_SIZE];
+  unsigned long bsecLastStateSaveMs = 0;
+  const unsigned long BSEC_STATE_SAVE_INTERVAL_MS = 360UL * 60UL * 1000UL; // 360 minutes
+#else
+  bool bsecOk = false;  // still expose health in /live
+  float iaq = 0.0f, eco2 = 0.0f, bvoc = 0.0f;
+#endif
 
 // ISR for tipping bucket; keep it IRAM safe and fast
 void IRAM_ATTR rainIsr(){
@@ -168,6 +211,25 @@ static String urlEncode(const String& s){
   return out;
 }
 
+// Sanitize an mDNS host label (without .local)
+static String sanitizeMdnsHost(const String& in){
+  String out; out.reserve(in.length());
+  for (size_t i = 0; i < in.length(); ++i) {
+    char c = (char)in[i];
+    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-') {
+      out += c;
+    } else if (c == ' ' || c == '_') {
+      out += '-';
+    }
+  }
+  while (out.length() && out[0] == '-') out.remove(0, 1);
+  while (out.length() && out[out.length()-1] == '-') out.remove(out.length()-1);
+  if (out.length() == 0) out = "weatherstation1";
+  if (out.length() > 31) out = out.substring(0, 31);
+  return out;
+}
+
 // Compute SD used bytes recursively as a fallback when FS does not expose usedBytes()
 uint64_t computeSdUsedBytesRecursive(File dir) {
   uint64_t total = 0;
@@ -183,7 +245,6 @@ uint64_t computeSdUsedBytesRecursive(File dir) {
   }
   return total;
 }
-
 uint64_t computeSdUsedBytes() {
   File root = SD.open("/");
   if (!root) return 0;
@@ -224,6 +285,106 @@ float computeWetBulbC(float Tc, float RH){
   return term1 + term2 - term3 + term4 - 4.686035f;
 }
 
+// ---- Additional derived meteorology utilities ----
+static inline float saturationVaporPressure_hPa(float Tc){
+  // Magnus (Alduchov & Eskridge) over water
+  const float a = 17.62f, b = 243.12f;
+  return 6.112f * expf((a * Tc) / (b + Tc));
+}
+
+static inline float vaporPressure_hPa(float Tc, float RH){
+  RH = clampf(RH, 0.0f, 100.0f);
+  return (RH * 0.01f) * saturationVaporPressure_hPa(Tc);
+}
+
+// Absolute humidity (g/m^3) from T (°C) and RH (%)
+float computeAbsoluteHumidity_gm3(float Tc, float RH){
+  float e_hPa = vaporPressure_hPa(Tc, RH);
+  float Tk = Tc + 273.15f;
+  if (Tk < 0.01f) Tk = 0.01f;
+  return 216.7f * (e_hPa / Tk);
+}
+
+// Mixing ratio (g/kg) from T (°C), RH (%) and pressure (hPa)
+float computeMixingRatio_gPerKg(float Tc, float RH, float P_hPa){
+  float e = vaporPressure_hPa(Tc, RH);
+  float denom = (P_hPa - e);
+  if (denom < 0.001f) denom = 0.001f;
+  return 621.97f * (e / denom);
+}
+
+// Specific humidity (g/kg) from T (°C), RH (%) and pressure (hPa)
+float computeSpecificHumidity_gPerKg(float Tc, float RH, float P_hPa){
+  // q (kg/kg) = 0.622 e / (P - 0.378 e)
+  float e = vaporPressure_hPa(Tc, RH);
+  float denom = (P_hPa - 0.378f * e);
+  if (denom < 0.001f) denom = 0.001f;
+  float q = (0.622f * e) / denom; // kg/kg
+  return q * 1000.0f; // g/kg
+}
+
+// Vapor Pressure Deficit (kPa) from T (°C) and RH (%)
+float computeVpd_kPa(float Tc, float RH){
+  // Use Tetens in kPa directly for stability at high temps
+  float es_kPa = 0.6108f * expf((17.27f * Tc) / (Tc + 237.3f));
+  float ea_kPa = es_kPa * clampf(RH, 0.0f, 100.0f) * 0.01f;
+  float vpd = es_kPa - ea_kPa;
+  return vpd < 0.0f ? 0.0f : vpd;
+}
+
+// Air density (kg/m^3) from T (°C), RH (%) and pressure (hPa)
+float computeAirDensity_kgm3(float Tc, float RH, float P_hPa){
+  const float Rd = 287.058f;   // J/(kg·K)
+  const float Rv = 461.495f;   // J/(kg·K)
+  float Tk = Tc + 273.15f;
+  if (Tk < 0.01f) Tk = 0.01f;
+  float e_hPa = vaporPressure_hPa(Tc, RH);
+  float e_Pa = e_hPa * 100.0f;
+  float P_Pa = P_hPa * 100.0f;
+  float Pd = P_Pa - e_Pa; if (Pd < 0.0f) Pd = 0.0f;
+  float rho = (Pd / (Rd * Tk)) + (e_Pa / (Rv * Tk));
+  return rho;
+}
+
+// Humidex (°C) from T (°C) and RH (%)
+float computeHumidexC(float Tc, float RH){
+  // Compute dew point then vapor pressure (hPa) via Clausius–Clapeyron
+  float Td = computeDewPointC(Tc, RH);
+  float e = 6.11f * expf(5417.7530f * (1.0f/273.16f - 1.0f/(273.15f + Td)));
+  return Tc + 0.5555f * (e - 10.0f);
+}
+
+// Wind chill (°C) from T (°C) and wind speed (km/h). Returns T when out of range.
+float computeWindChillC(float Tc, float windSpeedKmh){
+  if (Tc > 10.0f || windSpeedKmh < 4.8f) return Tc;
+  float v016 = powf(windSpeedKmh, 0.16f);
+  return 13.12f + 0.6215f*Tc - 11.37f*v016 + 0.3965f*Tc*v016;
+}
+
+// WBGT (shade, °C) from T (°C) and RH (%) using Stull Tw approximation
+float computeWbgtShadeC(float Tc, float RH){
+  float Tw = computeWetBulbC(Tc, RH);
+  return 0.7f * Tw + 0.3f * Tc;
+}
+
+// Improved UV index calculation with calibration constants
+// index = clamp((uv_mV - offset_mV) * slope_idx_per_mV, 0 .. 20)
+float computeUvIndexFromMilliVolts(float uvMilliVolts, float slopeIdxPerMilliVolt, float offsetMilliVolts){
+  float idx = (uvMilliVolts - offsetMilliVolts) * slopeIdxPerMilliVolt;
+  if (idx < 0.0f) idx = 0.0f;
+  if (idx > 20.0f) idx = 20.0f; // practical cap
+  return idx;
+}
+
+// Default calibration wrapper (tweak constants from field calibration if desired)
+static const float UV_CAL_SLOPE_IDX_PER_mV = 0.00125f; // ≈ 0.125 idx per 100 mV
+static const float UV_CAL_OFFSET_mV        = 0.0f;     // baseline offset
+float computeUvIndexCalibrated(float uvMilliVolts){
+  return computeUvIndexFromMilliVolts(uvMilliVolts, UV_CAL_SLOPE_IDX_PER_mV, UV_CAL_OFFSET_mV);
+}
+
+// BSEC2 constants will be available from bsec2.h when library is present
+
 // ===== Config persisted in Preferences ('app' namespace) =====
 struct AppConfig {
   float altitudeM;            // meters
@@ -237,16 +398,17 @@ struct AppConfig {
   uint16_t sleepMinutes;      // deep sleep duration between wakes (minutes)
   float trendThresholdHpa;    // pressure delta threshold (hPa) for trend
   bool  rainUnitInches;       // true=in/h, false=mm/h
+  String mdnsHost;            // mDNS hostname label (no .local)
 };
 Preferences appPrefs;
 AppConfig appCfg = { 0.0f, true, 1.08f, false,
-                     1600.0f, 1400.0f, 10, 10, 0.6f, false };
+                     1600.0f, 1400.0f, 10, 10, 0.6f, false, String("weatherstation1") };
 
 void loadAppConfig(){
   appPrefs.begin("app", false);
   String cfg = appPrefs.getString("cfg", "");
   if (cfg.length()) {
-    StaticJsonDocument<256> d; if (deserializeJson(d, cfg)==DeserializationError::Ok){
+    StaticJsonDocument<320> d; if (deserializeJson(d, cfg)==DeserializationError::Ok){
       appCfg.altitudeM    = d["altitude_m"] | appCfg.altitudeM;
       appCfg.tempF        = d["temp_unit"]  ? (String((const char*)d["temp_unit"]) == "F") : appCfg.tempF;
       // pressure unit setting removed; always plot/show both
@@ -258,6 +420,7 @@ void loadAppConfig(){
       appCfg.sleepMinutes = d["sleep_minutes"] | appCfg.sleepMinutes;
       appCfg.trendThresholdHpa = d["trend_threshold_hpa"] | appCfg.trendThresholdHpa;
       appCfg.rainUnitInches = d["rain_unit"] ? (String((const char*)d["rain_unit"]) == "in") : appCfg.rainUnitInches;
+      if (d["mdns_host"]) appCfg.mdnsHost = String((const char*)d["mdns_host"]);
     }
   }
   // Apply to globals
@@ -270,7 +433,7 @@ void loadAppConfig(){
 }
 
 void saveAppConfig(){
-  StaticJsonDocument<256> d;
+  StaticJsonDocument<320> d;
   d["altitude_m"]    = appCfg.altitudeM;
   d["temp_unit"]     = appCfg.tempF ? "F" : "C";
   // pressure unit removed; keep both in JSON/UI
@@ -282,6 +445,7 @@ void saveAppConfig(){
   d["sleep_minutes"]  = appCfg.sleepMinutes;
   d["trend_threshold_hpa"] = appCfg.trendThresholdHpa;
   d["rain_unit"] = appCfg.rainUnitInches ? "in" : "mm";
+  d["mdns_host"] = appCfg.mdnsHost.c_str();
   String out; serializeJson(d, out);
   appPrefs.putString("cfg", out);
 }
@@ -350,7 +514,8 @@ const char* zambrettiSimple(float mslp_hPa, const char* trend){
 // provide a concise human-readable summary for the main dashboard.
 static const char* generalForecastFromSensors(float tempF, float hum,
                                               float mslp_hPa, const char* trend,
-                                              float rainRateMmH, float lux){
+                                              float rainRateMmH, float lux,
+                                              float uvIndex){
   // Immediate rain condition has highest precedence
   if (rainRateMmH > 0.05f) return "Raining now";
 
@@ -363,8 +528,11 @@ static const char* generalForecastFromSensors(float tempF, float hum,
 
   // Rising pressure generally improving
   if (strcmp(trend, "Rising") == 0) {
-    if (mslp_hPa > 1018.0f) return "Improving / Fair";
-    return "Improving";
+    if (mslp_hPa > 1018.0f) {
+      if (uvIndex >= 8.0f && lux > 20000.0f) return "Sunny / High UV";
+      return "Improving / Fair";
+    }
+    return (uvIndex >= 8.0f ? "Improving / High UV" : "Improving");
   }
 
   // Steady pressure: qualify by humidity/temperature
@@ -375,6 +543,7 @@ static const char* generalForecastFromSensors(float tempF, float hum,
 
   // Otherwise, neutral
   if (hum > 85.0f) return "Humid / Overcast";
+  if (uvIndex >= 8.0f && lux > 20000.0f) return "High UV / Sunny";
   return "Neutral";
 }
 
@@ -390,6 +559,25 @@ float readLux() {
   float lx = lightMeter.readLux();
   if (lx < 0 || isnan(lx)) lx = 0;
   return lx;
+}
+
+// Read GUVA-S12SD analog output and return millivolts (mV)
+float readUvMilliVolts(){
+  analogSetPinAttenuation(UV_PIN, ADC_11db);
+  long acc = 0; const int N = 16;
+  for (int i=0;i<N;i++){ acc += analogRead(UV_PIN); delay(2); }
+  int raw = acc / N;
+  float vAdc = raw * (3.3f / 4095.0f);
+  return vAdc * 1000.0f; // mV
+}
+
+// Crude UV Index estimate from GUVA-S12SD mV output
+// Linearly map 50..1000 mV → 0..11+ and clamp
+float computeUvIndexFromMv(float uvMv){
+  if (!isfinite(uvMv)) return 0.0f;
+  float x = (uvMv - 50.0f) / (1000.0f - 50.0f) * 11.0f;
+  if (x < 0.0f) x = 0.0f; if (x > 11.0f) x = 11.0f;
+  return x;
 }
 
 // Unified status LED updater:
@@ -501,13 +689,51 @@ void performLogging() {
   nextLogMillis = now + LOG_INTERVAL_MS;
 
     // —— read sensors (BME680) ——
+    float Tc = 0.0f, T = 0.0f, H = 0.0f, P = 0.0f, gasKOhm = 0.0f;
+    
+#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
+    if (bsecOk) {
+      // Use BSEC2 for all BME680 data
+      if (bsec.run()) {
+        // Pull outputs from BSEC2
+        Tc = bsec.getData(BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE).signal;
+        H  = bsec.getData(BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY).signal;
+        P  = bsec.getData(BSEC_OUTPUT_RAW_PRESSURE).signal; // already in hPa per lib
+        gasKOhm = bsec.getData(BSEC_OUTPUT_RAW_GAS).signal / 1000.0f;
+
+        // Update BSEC2-specific data
+        iaq  = bsec.getData(BSEC_OUTPUT_IAQ).signal;
+        eco2 = bsec.getData(BSEC_OUTPUT_CO2_EQUIVALENT).signal;
+        bvoc = bsec.getData(BSEC_OUTPUT_BREATH_VOC_EQUIVALENT).signal;
+        
+        // Validate values
+        if (!isfinite(iaq) || iaq < 0.0f || iaq > 500.0f) iaq = 0.0f;
+        if (!isfinite(eco2) || eco2 < 400.0f || eco2 > 5000.0f) eco2 = 400.0f;
+        if (!isfinite(bvoc) || bvoc < 0.0f || bvoc > 10.0f) bvoc = 0.0f;
+      } else {
+        Serial.println("⚠️ BSEC2 run() failed in performLogging");
+      }
+    } else {
+      // Fall back to regular BME680
+      bme.performReading();
+      Tc = bme.temperature;
+      H = bme.humidity;
+      P = bme.pressure / 100.0f;
+      gasKOhm = bme.gas_resistance / 1000.0f;
+    }
+#else
+    // BSEC2 disabled, use regular BME680
     bme.performReading();
-    float Tc = bme.temperature;
-    float T = Tc * 9.0 / 5.0 + 32.0;
-    float H = bme.humidity;
-    float P = bme.pressure / 100.0;
-    float gasKOhm = bme.gas_resistance / 1000.0f;
+    Tc = bme.temperature;
+    H = bme.humidity;
+    P = bme.pressure / 100.0f;
+    gasKOhm = bme.gas_resistance / 1000.0f;
+#endif
+
+    T = Tc * 9.0f / 5.0f + 32.0f;
     float L = readLux();
+    float uvMv = readUvMilliVolts();
+    float uvIdx = computeUvIndexFromMv(uvMv);
     analogSetPinAttenuation(ADC_BATTERY_PIN, ADC_11db);
     long acc = 0; const int N = 8;
     for (int i=0;i<N;i++){ acc += analogRead(ADC_BATTERY_PIN); delay(2); }
@@ -556,12 +782,12 @@ void performLogging() {
       portEXIT_CRITICAL(&rainMux);
       for (uint8_t i=0;i<sizeCopy;i++) { if (nowMs - timesCopy[i] <= 3600000UL) tipsLastHour++; else break; }
       float rainRateMmH = tipsLastHour * MM_PER_TIP;
-      const char* gforecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
-      // CSV (reordered): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
+      const char* gforecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L, uvIdx);
+      // CSV (extended): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,iaq,eco2_ppm,bvoc_ppm
       float rainInHr = rainRateMmH * 0.0393700787f;
       float rainOut = appCfg.rainUnitInches ? rainInHr : rainRateMmH;
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.2f,%.1f,%.2f,%.2f,%lu\n",
-               timestr, T, H, dewF, hiF, P, trend, gforecast, L, Vbat, gasKOhm, mslp_hPa*0.0295299830714f, rainOut, (unsigned long)bootCount);
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%.1f,%.0f,%.3f\n",
+               timestr, T, H, dewF, hiF, P, trend, gforecast, L, uvMv, uvIdx, Vbat, gasKOhm, mslp_hPa*0.0295299830714f, rainOut, (unsigned long)bootCount, iaq, eco2, bvoc);
       f.close();
       // update in-memory and persisted last log timestamps
       lastSdLogUnix = (uint32_t)nowUnixTs;
@@ -794,19 +1020,87 @@ void setup() {
 
 
   // —— I²C & Sensor Initialization ——
-  // BME680 init (try common I2C addresses 0x76 then 0x77)
-  bool bmeOk = bme.begin(0x76);
-  if (!bmeOk) bmeOk = bme.begin(0x77);
-  if (!bmeOk) {
-    Serial.println("❌ BME680 not found!");
+  bool bmeOk = false;
+  
+//#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
+#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
+  // Try BSEC2 first when enabled
+  Serial.println("🔍 Attempting BSEC2 initialization...");
+  Serial.println("🔍 BSEC2 library found, attempting to initialize...");
+  
+  // Check I2C bus first
+  Wire.beginTransmission(0x76);
+  byte error = Wire.endTransmission();
+  Serial.printf("🔍 I2C device at 0x76: %s\n", error == 0 ? "found" : "not found");
+  
+  Wire.beginTransmission(0x77);
+  error = Wire.endTransmission();
+  Serial.printf("🔍 I2C device at 0x77: %s\n", error == 0 ? "found" : "not found");
+  
+  // Initialize BSEC2 on detected address, prefer 0x76 then 0x77
+  bool bsecBeginOk = false;
+  if (bsec.begin(0x76, Wire)) {
+    bsecBeginOk = true;
+  } else if (bsec.begin(0x77, Wire)) {
+    bsecBeginOk = true;
+  }
+
+  if (bsecBeginOk) {
+    Serial.println("🔍 BSEC2 begin() succeeded, loading config/state and setting up subscription...");
+    // Apply configuration blob for 3.3V LP profile
+    (void)bsec.setConfig(BSEC2_CONFIG_33V_3S_4D);
+
+    // Restore saved state if present
+    bsecPrefs.begin("bsec", false);
+    size_t n = bsecPrefs.getBytes("state", bsecStateBuf, sizeof(bsecStateBuf));
+    if (n == sizeof(bsecStateBuf)) {
+      if (bsec.setState(bsecStateBuf)) {
+        Serial.println("✅ BSEC2 state restored from NVS");
+      } else {
+        Serial.println("⚠️ Failed to apply BSEC2 state; continuing with defaults");
+      }
+    } else {
+      Serial.println("ℹ️ No previous BSEC2 state found; starting fresh");
+    }
+
+    // Subscribe to common outputs; sample rate LP (3s)
+    bsecSensor sensorList[] = {
+      BSEC_OUTPUT_IAQ,
+      BSEC_OUTPUT_CO2_EQUIVALENT,
+      BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
+      BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
+      BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
+      BSEC_OUTPUT_RAW_PRESSURE,
+      BSEC_OUTPUT_RAW_GAS
+    };
+    bsec.updateSubscription(sensorList, sizeof(sensorList)/sizeof(sensorList[0]), BSEC_SAMPLE_RATE_LP);
+    bsecOk = true;
+    bmeOk = true; // BSEC2 can provide basic sensor data too
+    Serial.println("✅ BSEC2 initialized (LP rate) - using BSEC2 for all BME680 data");
   } else {
-    // Configure BME680 oversampling and gas heater
-    bme.setTemperatureOversampling(BME680_OS_8X);
-    bme.setHumidityOversampling(BME680_OS_2X);
-    bme.setPressureOversampling(BME680_OS_4X);
-    bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
-    bme.setGasHeater(320, 150); // 320°C for 150 ms
-    Serial.println("✅ BME680 initialized");
+    bsecOk = false;
+    Serial.println("⚠️ BSEC2 init failed, falling back to regular BME680 library");
+  }
+#else
+  Serial.println("🔍 BSEC2 disabled or library not found");
+#endif
+
+  // Fallback to regular BME680 library if BSEC2 failed or is disabled
+  if (!bsecOk) {
+    Serial.println("🔍 Attempting regular BME680 initialization...");
+    bmeOk = bme.begin(0x76);
+    if (!bmeOk) bmeOk = bme.begin(0x77);
+    if (!bmeOk) {
+      Serial.println("❌ BME680 not found!");
+    } else {
+      // Configure BME680 oversampling and gas heater
+      bme.setTemperatureOversampling(BME680_OS_8X);
+      bme.setHumidityOversampling(BME680_OS_2X);
+      bme.setPressureOversampling(BME680_OS_4X);
+      bme.setIIRFilterSize(BME680_FILTER_SIZE_3);
+      bme.setGasHeater(320, 150); // 320°C for 150 ms
+      Serial.println("✅ BME680 initialized (regular library)");
+    }
   }
   // VEML7700 init
   if (!lightMeter.begin()) {
@@ -849,9 +1143,9 @@ void setup() {
     }
     File fboot = SD.open("/logs.csv", FILE_APPEND);
     if (fboot) {
-      // New order: timestamp,temp,hum,dew,hi,pressure,trend,forecast,lux,voltage,voc,boot_count
+      // Extended schema: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,iaq,eco2_ppm,bvoc_ppm
       // For boot row we leave numeric fields empty and include boot_count only
-      fboot.printf("%s,,,,,, ,,,,%lu\n", timestrBoot, (unsigned long)bootCount);
+      fboot.printf("%s,,,,,,,,,,,,,,,%lu\n", timestrBoot, (unsigned long)bootCount);
       fboot.close();
     }
   }
@@ -866,10 +1160,14 @@ void setup() {
   setupServerRoutes();
   server.begin();
   Serial.println("✅ HTTP server started");
-  if (MDNS.begin("WeatherStation1")) {//--------------------------------------------Change this per device 
-    Serial.println("✅ mDNS responder started");
-  } else {
-    Serial.println("⚠️ mDNS failed");
+  {
+    String host = sanitizeMdnsHost(appCfg.mdnsHost.length() ? appCfg.mdnsHost : String("weatherstation1"));
+    appCfg.mdnsHost = host;
+    if (MDNS.begin(host.c_str())) {
+      Serial.printf("✅ mDNS responder started: %s.local\n", host.c_str());
+    } else {
+      Serial.println("⚠️ mDNS failed");
+    }
   }
 
 
@@ -979,17 +1277,18 @@ void setupServerRoutes() {
     html += "<h2>Config Settings</h2>";
     html += "<form method='POST' action='/config'>";
     html += "<div class='grid'>";
-    html += "<div><label>Altitude (m)</label><input name='alt' value='" + String(appCfg.altitudeM,1) + "'></div>";
-    html += "<div><label>Temperature Unit</label><select name='tu'><option value='F'" + String(appCfg.tempF?" selected":"") + ">Fahrenheit</option><option value='C'" + String(!appCfg.tempF?" selected":"") + ">Celsius</option></select></div>";
+    html += "<div><label>Altitude (m)</label><input name='alt' value='" + String(appCfg.altitudeM,1) + "'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Used to compute sea‑level pressure (MSLP).</div></div>";
+    html += "<div><label>Temperature Unit</label><select name='tu'><option value='F'" + String(appCfg.tempF?" selected":"") + ">Fahrenheit</option><option value='C'" + String(!appCfg.tempF?" selected":"") + ">Celsius</option></select><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Affects displayed units; raw calculations include both.</div></div>";
     // Pressure unit setting removed; UI shows both Pressure (hPa) and MSLP (inHg)
-    html += "<div><label>Battery Calibration</label><input name='bc' value='" + String(appCfg.batCal,2) + "' title='Multiply measured battery voltage by this factor'></div>";
-    html += "<div><label>Clock Format</label><select name='tf'><option value='24'" + String(!appCfg.time12h?" selected":"") + ">24‑hour</option><option value='12'" + String(appCfg.time12h?" selected":"") + ">12‑hour</option></select></div>";
-    html += "<div><label>Daylight entry (lux)</label><input name='led' value='" + String(appCfg.luxEnterDay,0) + "'></div>";
-    html += "<div><label>Night entry (lux)</label><input name='lxd' value='" + String(appCfg.luxExitDay,0) + "'></div>";
-    html += "<div><label>Log interval (minutes)</label><input name='lim' value='" + String(appCfg.logIntervalMin) + "'></div>";
-    html += "<div><label>Sleep duration (minutes)</label><input name='slm' value='" + String(appCfg.sleepMinutes) + "'></div>";
-    html += "<div><label>Pressure trend threshold (hPa)</label><input name='pth' value='" + String(appCfg.trendThresholdHpa,1) + "'></div>";
-    html += "<div><label>Rain unit</label><select name='ru'><option value='mm'" + String(!appCfg.rainUnitInches?" selected":"") + ">mm/h</option><option value='in'" + String(appCfg.rainUnitInches?" selected":"") + ">in/h</option></select></div>";
+    html += "<div><label>Battery Calibration</label><input name='bc' value='" + String(appCfg.batCal,2) + "' title='Multiply measured battery voltage by this factor'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Multiplier applied to ADC‑derived pack voltage.</div></div>";
+    html += "<div><label>Clock Format</label><select name='tf'><option value='24'" + String(!appCfg.time12h?" selected":"") + ">24‑hour</option><option value='12'" + String(appCfg.time12h?" selected":"") + ">12‑hour</option></select><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Affects timestamps in UI and CSV.</div></div>";
+    html += "<div><label>Daylight entry (lux)</label><input name='led' value='" + String(appCfg.luxEnterDay,0) + "'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Average lux to switch to DAY (stay awake).</div></div>";
+    html += "<div><label>Night entry (lux)</label><input name='lxd' value='" + String(appCfg.luxExitDay,0) + "'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Average lux to switch back to NIGHT (deep sleep).</div></div>";
+    html += "<div><label>Log interval (minutes)</label><input name='lim' value='" + String(appCfg.logIntervalMin) + "'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>CSV cadence while awake (DAY mode).</div></div>";
+    html += "<div><label>Sleep duration (minutes)</label><input name='slm' value='" + String(appCfg.sleepMinutes) + "'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Deep sleep duration between wakes in NIGHT mode.</div></div>";
+    html += "<div><label>Pressure trend threshold (hPa)</label><input name='pth' value='" + String(appCfg.trendThresholdHpa,1) + "'><div style='opacity:.7;font-size:.9em;margin-top:4px;'>ΔP over several hours to classify Rising/Falling.</div></div>";
+    html += "<div><label>Rain unit</label><select name='ru'><option value='mm'" + String(!appCfg.rainUnitInches?" selected":"") + ">mm/h</option><option value='in'" + String(appCfg.rainUnitInches?" selected":"") + ">in/h</option></select><div style='opacity:.7;font-size:.9em;margin-top:4px;'>Affects CSV and UI rain rate.</div></div>";
+    html += "<div><label>mDNS Hostname (no .local)</label><input name='mdns' value='" + htmlEscape(appCfg.mdnsHost.length()?appCfg.mdnsHost:String("weatherstation1")) + "' title='Letters, numbers, hyphen; becomes host.local'></div>";
     html += "</div><button type='submit'>Save Settings</button></form>";
     html += "<p><a class='btn' href='/'>← Back to Dashboard</a></p>";
     html += "</div></body></html>";
@@ -1007,6 +1306,20 @@ void setupServerRoutes() {
     if (server.hasArg("slm")) appCfg.sleepMinutes = (uint16_t)server.arg("slm").toInt();
     if (server.hasArg("pth")) appCfg.trendThresholdHpa = server.arg("pth").toFloat();
     if (server.hasArg("ru")) appCfg.rainUnitInches = (server.arg("ru") == "in");
+    // mDNS host update
+    if (server.hasArg("mdns")) {
+      String requested = sanitizeMdnsHost(server.arg("mdns"));
+      if (!requested.equalsIgnoreCase(appCfg.mdnsHost)) {
+        appCfg.mdnsHost = requested;
+        // Restart mDNS with new hostname
+        MDNS.end();
+        if (MDNS.begin(appCfg.mdnsHost.c_str())) {
+          Serial.printf("✅ mDNS changed to: %s.local\n", appCfg.mdnsHost.c_str());
+        } else {
+          Serial.println("⚠️ mDNS restart failed after change");
+        }
+      }
+    }
     saveAppConfig();
     server.sendHeader("Location", "/config", true);
     server.send(302, "text/plain", "");
@@ -1060,6 +1373,14 @@ void handleRoot() {
     transition:transform .2s;
   }
   a.btn:hover, button.btn:hover { text-decoration:none; transform:scale(1.05); }
+  /* Layout wrapper for legend + cards */
+  #mainwrap { display:grid; grid-template-columns: 280px 1fr; gap:16px; width:90%; max-width:1200px; }
+  #legend { background:#1e1e1e; padding:16px; border-radius:6px; height:fit-content; position:sticky; top:8px; align-self:start; }
+  #legend h3 { margin:0 0 8px; font-size:1.05em; }
+  #legend .item { margin:8px 0; }
+  #legend .item b { display:block; color:#ccc; font-weight:600; margin-bottom:2px; }
+  #legend .item span { color:#aaa; font-size:.92em; }
+  @media (max-width: 900px){ #mainwrap{ grid-template-columns: 1fr; } #legend{ order:2; } }
   #cards {
     display:grid;
     grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
@@ -1097,7 +1418,24 @@ void handleRoot() {
 </head><body>
   <h2>Live Weather Station Dashboard</h2>
   <button id="refreshBtn">Refresh Now</button>
-  <div id="cards">
+  <div id="mainwrap">
+    <div id="legend">
+      <h3>Legend</h3>
+      <div class="item"><b>Temp</b><span>Ambient air temperature. Unit follows Config (°F/°C).</span></div>
+      <div class="item"><b>Hum</b><span>Relative Humidity (%).</span></div>
+      <div class="item"><b>Pressure</b><span>Station pressure (hPa). MSLP shows sea-level pressure (inHg).</span></div>
+      <div class="item"><b>Lux</b><span>Illuminance (ambient light). Higher = brighter daylight.</span></div>
+      <div class="item"><b>UV Index</b><span>Approximate UV index estimated from GUVA sensor.</span></div>
+      <div class="item"><b>VOC (kΩ)</b><span>BME680 gas sensor proxy (higher = cleaner air, relative).</span></div>
+      <div class="item"><b>IAQ</b><span>Indoor Air Quality index (0-500, lower = better).</span></div>
+      <div class="item"><b>eCO2 (ppm)</b><span>Estimated CO₂ concentration in ppm.</span></div>
+      <div class="item"><b>bVOC (ppm)</b><span>Breath VOC equivalent concentration in ppm.</span></div>
+      <div class="item"><b>Rain</b><span>Rate in mm/h or in/h (Config). Based on tipping bucket last hour.</span></div>
+      <div class="item"><b>Batt (V)</b><span>Battery voltage; header shows estimated %.</span></div>
+      <div class="item"><b>Dew/Heat/Wet Bulb</b><span>Derived comfort metrics from Temp and Humidity.</span></div>
+      <div class="item"><b>Trend/Forecast</b><span>Pressure trend over time and brief outlook.</span></div>
+    </div>
+    <div id="cards">
     <!-- Row 1 -->
     <div class="card">
       <h4>Temp (F)</h4>
@@ -1123,6 +1461,26 @@ void handleRoot() {
       <h4>Lux</h4>
       <div id="luxVal" class="value">--</div>
       <canvas id="luxChart"></canvas>
+    </div>
+    <div class="card">
+      <h4>UV Index</h4>
+      <div id="uvVal" class="value">--</div>
+      <canvas id="uvChart"></canvas>
+    </div>
+    <div class="card">
+      <h4>IAQ</h4>
+      <div id="iaqVal" class="value">--</div>
+      <canvas id="iaqChart"></canvas>
+    </div>
+    <div class="card">
+      <h4>eCO2 (ppm)</h4>
+      <div id="eco2Val" class="value">--</div>
+      <canvas id="eco2Chart"></canvas>
+    </div>
+    <div class="card">
+      <h4>bVOC (ppm)</h4>
+      <div id="bvocVal" class="value">--</div>
+      <canvas id="bvocChart"></canvas>
     </div>
     <div class="card">
       <h4>VOC (kΩ)</h4>
@@ -1223,8 +1581,13 @@ void handleRoot() {
       <div id="sdStatus" class="value">--</div>
     </div>
     <div class="card">
+      <h4>BSEC2 OK?</h4>
+      <div id="bsecStatus" class="value">--</div>
+    </div>
+    <div class="card">
       <h4>Boot Count</h4>
       <div id="bootCountVal" class="value">--</div>
+    </div>
     </div>
   </div>
 
@@ -1307,8 +1670,20 @@ async function fetchLive() {
   document.getElementById('humVal').textContent      = o.hum.toFixed(1);
   document.getElementById('pressureVal').textContent = o.pressure.toFixed(2);
   document.getElementById('luxVal').textContent      = o.lux.toFixed(0);
+  if (document.getElementById('uvVal')) {
+    document.getElementById('uvVal').textContent = (o.uv_index ?? 0).toFixed(1);
+  }
   if (document.getElementById('vocVal')) {
     document.getElementById('vocVal').textContent      = (o.voc_kohm ?? 0).toFixed(1);
+  }
+  if (document.getElementById('iaqVal')) {
+    document.getElementById('iaqVal').textContent      = (o.iaq ?? 0).toFixed(1);
+  }
+  if (document.getElementById('eco2Val')) {
+    document.getElementById('eco2Val').textContent     = (o.eco2_ppm ?? 0).toFixed(0);
+  }
+  if (document.getElementById('bvocVal')) {
+    document.getElementById('bvocVal').textContent     = (o.bvoc_ppm ?? 0).toFixed(3);
   }
   document.getElementById('batVal').textContent      = o.batt.toFixed(2);
 
@@ -1367,6 +1742,10 @@ async function fetchLive() {
     o.rtc_ok   ? '<span style="color:#0f0">&#10003;</span>' 
                : '<span style="color:#f00">&#10007;</span>';
 
+  document.getElementById('bsecStatus').innerHTML   =
+    o.bsec_ok  ? '<span style="color:#0f0">&#10003;</span>' 
+               : '<span style="color:#f00">&#10007;</span>';
+
   document.getElementById('bootCountVal').textContent =
     o.boot_count;
 
@@ -1380,13 +1759,17 @@ async function fetchLive() {
     hi:  isF ? (o.hi_f  ?? 0) : (o.hi_c  ?? 0),
     wbt: isF ? (o.wbt_f ?? 0) : (o.wbt_c ?? 0),
     lux: o.lux,
+    uv: (o.uv_index ?? 0),
     batt: o.batt,
     voc: (o.voc_kohm ?? 0),
-    rain: (o.rain_mmph ?? 0)
+    rain: (o.rain_mmph ?? 0),
+    iaq: (o.iaq ?? 0),
+    eco2: (o.eco2_ppm ?? 0),
+    bvoc: (o.bvoc_ppm ?? 0)
   });
   if (liveData.length > MAX_POINTS) liveData.shift();
 
-  ['temp','hum','pressure','mslp','dew','hi','wbt','lux','batt','voc','rain'].forEach(f => {
+  ['temp','hum','pressure','mslp','dew','hi','wbt','lux','uv','batt','voc','rain','iaq','eco2','bvoc'].forEach(f => {
     draw(f, f + 'Chart', liveData);
   });
 }
@@ -1428,16 +1811,71 @@ window.onload = () => {
 // —— Live JSON Endpoint + CSV Logging ——
 // —— Live JSON Endpoint + CSV Logging ——
 void handleLive() {
-  // Read in °C, convert to °F
-  // BME680 requires performReading() to update values
-  bme.performReading();
-  float Tc = bme.temperature; // °C
-  float T = Tc * 9.0 / 5.0 + 32.0; // °F
+  // Read sensor data - use BSEC2 if available, otherwise fall back to regular BME680
+  float Tc = 0.0f, T = 0.0f, H = 0.0f, P = 0.0f, gasKOhm = 0.0f;
+  
+#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
+  if (bsecOk) {
+    // Use BSEC2 for all BME680 data
+    Serial.println("🔍 Using BSEC2 for sensor readings...");
+    if (bsec.run()) {
+      // Get BSEC2 data via outputs API
+      Tc = bsec.getData(BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE).signal;
+      H  = bsec.getData(BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY).signal;
+      P  = bsec.getData(BSEC_OUTPUT_RAW_PRESSURE).signal; // already in hPa
+      gasKOhm = bsec.getData(BSEC_OUTPUT_RAW_GAS).signal / 1000.0f;
 
-  float H = bme.humidity; // %
-  float P = bme.pressure / 100.0F; // hPa
+      iaq  = bsec.getData(BSEC_OUTPUT_IAQ).signal;
+      eco2 = bsec.getData(BSEC_OUTPUT_CO2_EQUIVALENT).signal;
+      bvoc = bsec.getData(BSEC_OUTPUT_BREATH_VOC_EQUIVALENT).signal;
+      
+      Serial.printf("🔍 BSEC2 data: T=%.1f°C, H=%.1f%%, P=%.1fhPa, IAQ=%.1f, eCO2=%.0fppm, bVOC=%.3fppm\n", 
+                   Tc, H, P, iaq, eco2, bvoc);
+      
+      // Validate values are reasonable
+      if (!isfinite(iaq) || iaq < 0.0f || iaq > 500.0f) iaq = 0.0f;
+      if (!isfinite(eco2) || eco2 < 400.0f || eco2 > 5000.0f) eco2 = 400.0f;
+      if (!isfinite(bvoc) || bvoc < 0.0f || bvoc > 10.0f) bvoc = 0.0f;
+    } else {
+      // BSEC2 run failed, set all values to 0
+      Serial.println("⚠️ BSEC2 run() failed");
+      iaq = 0.0f;
+      eco2 = 0.0f;
+      bvoc = 0.0f;
+    }
+  } else {
+    // BSEC2 not available, use regular BME680
+    Serial.println("🔍 Using regular BME680 library...");
+    bme.performReading();
+    Tc = bme.temperature;
+    H = bme.humidity;
+    P = bme.pressure / 100.0f;
+    gasKOhm = bme.gas_resistance / 1000.0f;
+    // Set BSEC2 values to 0 when not available
+    iaq = 0.0f;
+    eco2 = 0.0f;
+    bvoc = 0.0f;
+  }
+#else
+  // BSEC2 disabled, use regular BME680
+  Serial.println("🔍 BSEC2 disabled, using regular BME680 library...");
+  bme.performReading();
+  Tc = bme.temperature;
+  H = bme.humidity;
+  P = bme.pressure / 100.0f;
+  gasKOhm = bme.gas_resistance / 1000.0f;
+  // Set BSEC2 values to 0 when disabled
+  iaq = 0.0f;
+  eco2 = 0.0f;
+  bvoc = 0.0f;
+#endif
+
+  // Convert temperature to Fahrenheit
+  T = Tc * 9.0f / 5.0f + 32.0f;
+  
   float L = readLux();
-  float gasKOhm = bme.gas_resistance / 1000.0f; // BME680 gas in kΩ
+  float uvMv = readUvMilliVolts();
+  float uvIdx = computeUvIndexFromMv(uvMv);
   analogSetPinAttenuation(ADC_BATTERY_PIN, ADC_11db);
   long acc = 0; const int N = 8;
   for (int i=0;i<N;i++){ acc += analogRead(ADC_BATTERY_PIN); delay(2); }
@@ -1544,7 +1982,7 @@ void handleLive() {
   h12 = getPressureDelta(12.0f, P, &d12);
   const char* trend = classifyTrendFromDelta(h3?d3:(h6?d6:(h12?d12:0)));
   const char* forecast = zambrettiSimple(mslp_hPa, trend);
-  const char* generalForecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L);
+  const char* generalForecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L, uvIdx);
 
   // Build JSON (temp unit per user setting)
   StaticJsonDocument<768> doc;
@@ -1555,8 +1993,15 @@ void handleLive() {
   doc["hum"] = H;
   doc["pressure"] = P;
   doc["lux"] = L;
+  doc["uv_mv"] = uvMv;
+  doc["uv_index"] = uvIdx;
   doc["batt"] = v;
   doc["voc_kohm"] = gasKOhm;
+  // BSEC2 metrics (+ health flag)
+  doc["bsec_ok"] = bsecOk;
+  doc["iaq"] = iaq;
+  doc["eco2_ppm"] = eco2;
+  doc["bvoc_ppm"] = bvoc;
   doc["uptime"] = up;
   doc["heap"] = heap;
   doc["flash_free_kb"] = flashFreeKB;
@@ -1643,10 +2088,10 @@ void handleLive() {
       for (uint8_t i=0;i<sizeCopy2;i++) { if (nowMs2 - timesCopy2[i] <= 3600000UL) tipsLastHour2++; else break; }
       float rainRateMmH_once = tipsLastHour2 * MM_PER_TIP;
       float rainOut_once = appCfg.rainUnitInches ? (rainRateMmH_once * 0.0393700787f) : rainRateMmH_once;
-      const char* gforecast_once = generalForecastFromSensors(T, H, mslp_hPa_once, trend, rainRateMmH_once, L);
-      float gasKOhmOnce = bme.gas_resistance / 1000.0f;
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.2f,%.1f,%.2f,%.2f,%lu\n",
-               timestr, T, H, dewF_once, hiF_once, P, trend, gforecast_once, L, v, gasKOhmOnce, mslp_inHg_once, rainOut_once, (unsigned long)bootCount);
+      const char* gforecast_once = generalForecastFromSensors(T, H, mslp_hPa_once, trend, rainRateMmH_once, L, uvIdx);
+      // gasKOhm is already read above in the sensor reading section
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%.1f,%.0f,%.3f\n",
+               timestr, T, H, dewF_once, hiF_once, P, trend, gforecast_once, L, uvMv, uvIdx, v, gasKOhm, mslp_inHg_once, rainOut_once, (unsigned long)bootCount, iaq, eco2, bvoc);
       f.close();
       // Persist unix timestamp as well for formatting per user preference later
       time_t nowUnixTs = time(nullptr);
@@ -1752,11 +2197,16 @@ void handleViewLogs() {
   html += "<option value='4'>Heat Index (F)</option>"; // numeric
   html += "<option value='5'>Pressure (hPa)</option>"; // numeric
   html += "<option value='8'>Lux</option>";            // numeric
-  html += "<option value='9'>Battery (V)</option>";    // numeric
-  html += "<option value='10'>VOC (kΩ)</option>";      // numeric
-  html += "<option value='11'>MSLP (inHg)</option>";   // numeric
-  html += "<option value='12'>Rain</option>";          // numeric, unit shown in header
-  html += "<option value='13'>Boot Count</option>";    // numeric
+  html += "<option value='9'>UV (mV)</option>";        // numeric
+  html += "<option value='10'>UV Index</option>";      // numeric
+  html += "<option value='11'>Battery (V)</option>";   // numeric
+  html += "<option value='12'>VOC (kΩ)</option>";      // numeric
+  html += "<option value='13'>MSLP (inHg)</option>";   // numeric
+  html += "<option value='14'>Rain</option>";          // numeric, unit shown in header
+  html += "<option value='15'>Boot Count</option>";    // numeric
+  html += "<option value='16'>IAQ</option>";            // numeric
+  html += "<option value='17'>eCO2 (ppm)</option>";     // numeric
+  html += "<option value='18'>bVOC (ppm)</option>";     // numeric
   html += "</select></div>";
   html += "<div class='group'><label>Type</label><select id='fType'>";
   html += "<option value='between'>Between</option>";
@@ -1772,7 +2222,7 @@ void handleViewLogs() {
   // Friendly headers
   html += "<table><thead><tr>";
   String rainHdr = appCfg.rainUnitInches ? "Rain (in/h)" : "Rain (mm/h)";
-  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>MSLP (inHg)</th><th>" + rainHdr + "</th><th>Boot Count</th>";
+  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>UV (mV)</th><th>UV Index</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>MSLP (inHg)</th><th>" + rainHdr + "</th><th>Boot Count</th><th>IAQ</th><th>eCO2 (ppm)</th><th>bVOC (ppm)</th>";
   html += "</tr></thead><tbody>";
 
   // Skip the CSV header if present
@@ -1781,10 +2231,10 @@ void handleViewLogs() {
 
   for (size_t i = startIdx; i < lines.size(); ++i) {
     String ln = lines[i];
-    // Split by comma into up to 16 fields (supports extended schema)
-    String cols[16];
+    // Split by comma into up to 24 fields (supports extended schema)
+    String cols[24];
     int col = 0; int from = 0; int idx;
-    while (col < 15 && (idx = ln.indexOf(',', from)) >= 0) {
+    while (col < 23 && (idx = ln.indexOf(',', from)) >= 0) {
       cols[col++] = ln.substring(from, idx);
       from = idx + 1;
     }
@@ -1817,11 +2267,16 @@ void handleViewLogs() {
       html += "<td>" + cols[6] + "</td>"; // trend
       html += "<td>" + cols[7] + "</td>";  // forecast (after trend)
       html += "<td>" + cols[8] + "</td>";  // lux
-      html += "<td>" + cols[9] + "</td>";  // voltage
-      html += "<td>" + cols[10] + "</td>"; // voc_kohm
-      html += "<td>" + (col>11?cols[11]:String("")) + "</td>"; // mslp_inHg
-      html += "<td>" + (col>12?cols[12]:String("")) + "</td>"; // rain (unit per setting at write time)
-      html += "<td>" + (col>13?cols[13]:String("")) + "</td>"; // boot_count
+      html += "<td>" + cols[9] + "</td>";   // uv_mv
+      html += "<td>" + cols[10] + "</td>";  // uv_index
+      html += "<td>" + (col>11?cols[11]:String("")) + "</td>"; // voltage
+      html += "<td>" + (col>12?cols[12]:String("")) + "</td>"; // voc_kohm
+      html += "<td>" + (col>13?cols[13]:String("")) + "</td>"; // mslp_inHg
+      html += "<td>" + (col>14?cols[14]:String("")) + "</td>"; // rain (unit per setting at write time)
+      html += "<td>" + (col>15?cols[15]:String("")) + "</td>"; // boot_count
+      html += "<td>" + (col>16?cols[16]:String("")) + "</td>"; // IAQ
+      html += "<td>" + (col>17?cols[17]:String("")) + "</td>"; // eCO2 ppm
+      html += "<td>" + (col>18?cols[18]:String("")) + "</td>"; // bVOC ppm
     }
     html += "</tr>";
   }
@@ -1885,8 +2340,8 @@ void handleReset() {
 
   File f = SD.open("/logs.csv", FILE_WRITE);
   if (f) {
-    // Unified 14-column schema (includes rain)
-    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count");
+    // Extended schema: appended uv_mv, uv_index, and BSEC2 metrics at the end
+    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,iaq,eco2_ppm,bvoc_ppm");
     f.close();
   } else {
     Serial.println("❌ Failed to recreate logs.csv");
@@ -1981,6 +2436,20 @@ void loop() {
 
   // ─── Day/Night state machine (may call deep-sleep) ───
   updateDayNightState();
+
+#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
+  // Periodically persist BSEC2 state (non-blocking check)
+  if (bsecOk) {
+    unsigned long nowMsSave = millis();
+    if (nowMsSave - bsecLastStateSaveMs >= BSEC_STATE_SAVE_INTERVAL_MS) {
+      if (bsec.getState(bsecStateBuf)) {
+        bsecPrefs.putBytes("state", bsecStateBuf, sizeof(bsecStateBuf));
+        Serial.println("💾 BSEC2 state saved to NVS");
+      }
+      bsecLastStateSaveMs = nowMsSave;
+    }
+  }
+#endif
 
   // ─── During 30‑min config window, still perform periodic logging ───
   if (serveWindow == UPTIME_STARTUP) {
