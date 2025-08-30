@@ -51,7 +51,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ```text
 .
-├─ WaetherStation08_22_25v17/   # Main Arduino sketch
+├─ WaetherStation08_24_25_v18/   # Main Arduino sketch
 ├─ docs/API.md                  # API reference & schema
 └─ README.md
 ```
@@ -78,7 +78,7 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
 
 ### Build & flash
 
-1. Open `WaetherStation08_22_25v17/*.ino` in Arduino IDE.
+1. Open `WaetherStation08_24_25_v18/WaetherStation08_24_25_v18.ino` in Arduino IDE.
 2. Select your ESP32 board & COM port.
 3. (Optional) Update default OTA/AP credentials in the sketch.
 4. Upload the firmware.
@@ -222,15 +222,15 @@ Wi‑Fi networks are managed via:
 - Power metering: INA3221 (I have Just need to weire)
 - Wind subsystem: wind vane, accelerometer  (I have hall sensors)
 - RGB LED Status debugging
-(16MB +Antenna Gold Edition)
 
 ---
 
 ## Implemented Hardware
-- UV sensing: S12SD UV Index added
-- Solar/charging: 900 mA MPPT controller (Efficiency approved)
-- Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)
+- [UV sensing: S12SD UV Index](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- [Solar/charging: 900 mA MPPT controller (Efficiency approved)](https://www.amazon.com/dp/B07MML4YJV?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- [Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909)
 
 ## Credits
-
+- Main enclosure based on [Thingiverse model](https://www.thingiverse.com/thing:4094861)
+- Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter)
 Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), and the Arduino community.

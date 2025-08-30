@@ -1,6 +1,6 @@
 ### ESP32 Weather Station – Public API and Function Reference
 
-This document describes the HTTP endpoints, persisted configuration, CSV schema, and the major functions exported in the current Arduino sketch (`WaetherStation08_22_25v17.ino`). It also includes examples and integration guidance.
+This document describes the HTTP endpoints, persisted configuration, CSV schema, and the major functions exported in the current Arduino sketch (`WaetherStation08_24_25_v18/WaetherStation08_24_25_v18.ino`). It also includes examples and integration guidance.
 
 ## Overview
 - Device: ESP32-based weather station
