@@ -26,24 +26,30 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ## Hardware
 
-- **MCU:** ESP32 (DevKit style)
-- **Sensors:** BME680 (I²C), VEML7700 (I²C)
+- **MCU:** ESP32‑S3 (Lonely Binary Dev Board, 16MB Flash / 8MB PSRAM); classic ESP32 also works
+- **Sensors:** BME680 (I²C), VEML7700 (I²C), optional UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind)
 - **RTC:** DS3231 (INT/SQW → GPIO2)
 - **Storage:** microSD (SPI)
-- **LED:** status LED on GPIO4
-- **Rain gauge:** reed switch on GPIO27 (to GND)
-- **Battery sense:** ADC pin 35 via 100k/100k divider
+- **LED:** status LED on GPIO37 (S3 mapping)
+- **Rain gauge:** reed switch to GND (GPIO18 in S3 mapping)
+- **Battery sense:** ADC pin with 100k/100k divider (GPIO4 in S3 mapping)
 
 ### Pinout (defaults)
 
 | Function | Pin(s) |
 |---|---|
-| I²C SDA / SCL | 21 / 22 |
-| SD CS / SCK / MISO / MOSI | 5 / 18 / 19 / 23 |
-| Battery ADC | 35 |
+| I²C SDA / SCL | 8 / 9 |
+| SD CS / SCK / MISO / MOSI | 5 / 12 / 13 / 11 |
+| Battery ADC | 4 |
 | DS3231 INT | 2 |
-| Status LED | 4 |
-| Rain gauge | 27 |
+| Status LED | 37 |
+| Rain gauge (tipping) | 18 |
+| Wind (Hall) | 7 |
+| UV analog (GUVA‑S12SD) | 6 |
+
+### Board specifics
+
+Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRAM, IPEX antenna). For board details and pinout, see the product page: [Lonely Binary ESP32‑S3 Dev Board (Gold, IPEX)](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909).
 
 ---
 
@@ -79,10 +85,16 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
 ### Build & flash
 
 1. Open `WaetherStation08_24_25_v18/WaetherStation08_24_25_v18.ino` in Arduino IDE.
-2. Select your ESP32 board & COM port.
-3. (Optional) Update default OTA/AP credentials in the sketch.
-4. Upload the firmware.
-5. Open **Serial Monitor** @ **115200** to see IP and **mDNS** name.
+2. For ESP32‑S3 select:
+   - Board: `ESP32S3 Dev Module`
+   - Flash Size: `16MB (128Mb)` (match your module)
+   - PSRAM: `OPI PSRAM` (if present)
+   - USB CDC On Boot: `Enabled` (optional)
+   - CPU Freq: `240 MHz`
+3. Select your COM port.
+4. (Optional) Update default OTA/AP credentials in the sketch.
+5. Upload the firmware.
+6. Open **Serial Monitor** @ **115200** to see IP and **mDNS** name.
 
 ---
 
@@ -120,6 +132,15 @@ After boot and Wi‑Fi join, open:
   "lux": 455,
   "batt": 4.07,
   "voc_kohm": 12.5,
+  "uv_mv": 320,
+  "uv_index": 3.2,
+  "pm25_ugm3": 8.5,
+  "pm10_ugm3": 12.1,
+  "sds_ok": true,
+  "sds_awake": true,
+  "sds_warm": true,
+  "co2_ppm": 760,
+  "wind_mph": 3.4,
   "dew_f": 50.3,
   "hi_f": 73.9,
   "wbt_f": 54.4,
@@ -155,9 +176,9 @@ After boot and Wi‑Fi join, open:
 
 File: `/logs.csv`
 
-Header (14 columns):
+Header (extended v18+):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph
 ```
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
@@ -165,7 +186,7 @@ Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per set
 2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,4.07,12.5,30.10,0.28,123
 ```
 
-Note: After the initial startup log, an extra boot event row is appended containing only the timestamp and `boot_count` (other columns blank).
+Note: After the initial startup log, an extra boot event row is appended containing only the timestamp and `boot_count` (other numeric columns blank). Clearing logs via `/reset` writes the extended header above.
 
 ---
 
@@ -192,6 +213,8 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
  - `sleep_minutes` — Deep sleep duration (minutes) between wakes. Default: 10  
  - `trend_threshold_hpa` — Pressure trend threshold (hPa). Default: 0.6  
  - `mdns_host` — mDNS hostname label (no `.local`)  
+ - `sds_mode` — SDS011 duty: `off`, `pre1`, `pre2`, `pre5`, `cont`  
+ - `debug_verbose` — verbose serial logging toggle  
 
 Wi‑Fi networks are managed via:
 

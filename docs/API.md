@@ -3,8 +3,8 @@
 This document describes the HTTP endpoints, persisted configuration, CSV schema, and the major functions exported in the current Arduino sketch (`WaetherStation08_24_25_v18/WaetherStation08_24_25_v18.ino`). It also includes examples and integration guidance.
 
 ## Overview
-- Device: ESP32-based weather station
-- Sensors: BME680 (temperature, humidity, pressure, gas resistance), VEML7700 (ambient light)
+- Device: ESP32-based weather station (tested on ESP32‑S3 — Lonely Binary ESP32‑S3 Dev Board, 16MB Flash / 8MB PSRAM)
+- Sensors: BME680 (temperature, humidity, pressure, gas resistance), VEML7700 (ambient light), optional UV analog (GUVA‑S12SD), optional SDS011 (PM2.5/PM10), optional SCD41 (CO₂), optional Hall anemometer (wind)
 - Storage: SD card (`/logs.csv`)
 - Time: DS3231 RTC (preferred) and NTP syncing
 - Connectivity: Wi‑Fi STA with AP fallback, mDNS
@@ -12,13 +12,16 @@ This document describes the HTTP endpoints, persisted configuration, CSV schema,
 - Modes: DAY (stay awake, periodic logs) / NIGHT (short serve window, deep sleep)
 
 ## Pins, Interfaces, and Constants
-- I2C SDA: 21, I2C SCL: 22
-- SD: CS=5, SCK=18, MISO=19, MOSI=23
-- Battery ADC pin: 35 (voltage divider R1=100k, R2=100k)
-- Rain gauge reed switch: 27 (to GND)
+ESP32‑S3 (Lonely Binary) default mapping in this sketch:
+- I²C SDA: 8, I²C SCL: 9
+- SD: CS=5, SCK=12, MISO=13, MOSI=11
+- Battery ADC pin: 4 (voltage divider R1=100k, R2=100k)
+- Rain gauge reed switch: 18 (to GND)
 - DS3231 interrupt: `RTC_INT_PIN = GPIO_NUM_2`
-- Status LED: 4
-- BME680 I2C addresses tried: `0x76`, then `0x77`
+- Status LED: 37
+- Hall anemometer (wind): 7
+- UV analog (GUVA‑S12SD): 6
+- BME680 I²C addresses tried: `0x76`, then `0x77`
 
 Timing and mode constants:
 - `DEEP_SLEEP_SECONDS = 600` (10 minutes)
@@ -30,14 +33,14 @@ Timing and mode constants:
 ## CSV Log Schema
 File: `/logs.csv`
 
-Header created by Reset (unified 14 columns):
+Header created by Reset (extended v18+):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph
 ```
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,4.07,12.5,30.10,0.28,123
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4
 ```
 
 Notes:
@@ -47,6 +50,7 @@ Notes:
 - `forecast` is a simplified label derived from MSLP, trend, humidity, temp, rain rate, and lux.
 - `voc_kohm` is derived from BME680 gas resistance in kΩ.
 - `rain` column is written in mm/h or in/h depending on the current unit setting.
+- Legacy logs (pre‑v18) used a 14‑column header; new columns were added later. When you Clear Logs via `/reset`, the extended header above is written.
 
 ## HTTP API
 Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` (configurable in `/config`).
@@ -72,6 +76,18 @@ Example:
   "uv_index": 3.2,
   "batt": 4.07,
   "voc_kohm": 12.5,
+  "pm25_ugm3": 8.5,
+  "pm10_ugm3": 12.1,
+  "sds_ok": true,
+  "sds_awake": true,
+  "sds_warm": true,
+  "co2_ppm": 760,
+  "scd41_ok": true,
+  "wind_hz": 2.2,
+  "wind_mps": 1.5,
+  "wind_kmh": 5.4,
+  "wind_mph": 3.4,
+  "wind_ok": true,
   "uptime": 1234,
   "heap": 176520,
   "flash_free_kb": 2048,
@@ -109,6 +125,7 @@ Example:
   - Pressure includes station pressure (`pressure`, hPa) and MSLP (`mslp_hPa`, `mslp_inHg`).
   - Battery is pack voltage (single-cell Li‑ion) in volts.
   - Rain rate is provided in mm/h and in/h; `rain_unit` indicates current CSV/UI unit.
+  - Wind speed is reported in multiple units; `wind_mph` is commonly used in CSV.
 
 cURL example:
 ```bash
@@ -142,6 +159,9 @@ curl -LOJ http://WeatherStation1.local/download
     - `sleep_minutes` — deep sleep duration between wakes; default 10
     - `trend_threshold_hpa` — pressure Δ threshold; default 0.6
   - `rain_unit` (`mm` or `in`) — unit used for rain rate in CSV/UI
+  - `mdns_host` (string) — mDNS hostname label (no `.local`)
+  - `sds_mode` (`off|pre1|pre2|pre5|cont`) — SDS011 duty preset
+  - `debug_verbose` (`0|1`) — verbose serial logging
 
 ### POST `/config`
 - Saves settings to Preferences namespace `app`.
@@ -159,6 +179,9 @@ curl -X POST \
   -F slm=10 \
   -F pth=0.6 \
   -F ru=mm \
+  -F mdns=weatherstation1 \
+  -F sds=pre2 \
+  -F dbg=0 \
   http://WeatherStation1.local/config -i
 ```
 
@@ -227,8 +250,9 @@ Fields:
 - `sleep_minutes` (integer)
 - `trend_threshold_hpa` (float)
 - `rain_unit` (`in`|`mm`)
-- `mdns_host` (string)
 - `mdns_host` (string) — mDNS host label (no `.local`)
+- `sds_mode` (`off|pre1|pre2|pre5|cont`)
+- `debug_verbose` (bool)
 
 Wi‑Fi configuration is under namespace `wifi`, key `config`, containing `{"networks": [{"ssid":"...","pass":"..."}, ...]}`.
 
@@ -287,6 +311,9 @@ All functions are defined within the main `.ino`. Key functions and their roles:
 
 ### Rain Gauge ISR
 - `void IRAM_ATTR rainIsr()` — Debounced tipping bucket counter; stores timestamps in a ring buffer for rate calculations used by `/live`.
+
+### Wind Anemometer ISR (optional)
+- `void IRAM_ATTR windIsr()` — Hall sensor pulse capture using a 128‑entry ring buffer; UI and `/live` expose wind in Hz, m/s, km/h, mph.
 
 ## Usage Notes
 - The device records a boot event row immediately after the first `performLogging()` in `setup()` (an extra line with only timestamp and boot count at the end).
