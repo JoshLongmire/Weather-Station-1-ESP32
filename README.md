@@ -96,6 +96,10 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
 5. Upload the firmware.
 6. Open **Serial Monitor** @ **115200** to see IP and **mDNS** name.
 
+<p align="center">
+  <img alt="Arduino IDE board settings" src="docs/IDE_Set.png" width="80%">
+</p>
+
 ---
 
 ## Web interface & API
@@ -103,6 +107,12 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
 After boot and Wi‑Fi join, open:
 
 **http://<mdnsHost>.local** (default: `weatherstation1.local`)
+
+<p align="center">
+  <img alt="Dashboard main page 1" src="docs/Mainpage1.png" width="32%">
+  <img alt="Dashboard main page 2" src="docs/Mainpage2.png" width="32%">
+  <img alt="Dashboard main page 3" src="docs/Mainpage3.png" width="32%">
+</p>
 
 ### Endpoints
 
@@ -118,6 +128,16 @@ After boot and Wi‑Fi join, open:
 | `/live`         | GET    | JSON telemetry & diagnostics                  |
 | `/sleep`        | POST   | Enter deep sleep immediately                  |
 | `/restart`      | GET/POST | Soft reboot                                 |
+
+#### View Logs page (`/view-logs`)
+<p align="center">
+  <img alt="View Logs page" src="docs/ViewLogspage.png" width="90%">
+</p>
+
+#### OTA Update page (`/update`)
+<p align="center">
+  <img alt="OTA Update page" src="docs/OTAUpdatepage.png" width="70%">
+</p>
 
 ### Example `/live` JSON (selected fields)
 
@@ -219,6 +239,10 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
  - `mdns_host` — mDNS hostname label (no `.local`)  
  - `sds_mode` — SDS011 duty: `off`, `pre1`, `pre2`, `pre5`, `cont`  
  - `debug_verbose` — verbose serial logging toggle  
+
+<p align="center">
+  <img alt="Config settings page" src="docs/Configsettingspage.png" width="80%">
+</p>
 
 Wi‑Fi networks are managed via:
 
