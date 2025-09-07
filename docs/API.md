@@ -51,6 +51,7 @@ Notes:
 - `voc_kohm` is derived from BME680 gas resistance in kΩ.
 - `rain` column is written in mm/h or in/h depending on the current unit setting.
 - Legacy logs (pre‑v18) used a 14‑column header; new columns were added later. When you Clear Logs via `/reset`, the extended header above is written.
+ - Additional `/live`-only fields like `forecast_detail`, `aqi_category`, `wind_avg_mph_1h`, and `sds_auto_sleep_ms_left` support richer dashboards but are not in the CSV.
 
 ## HTTP API
 Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` (configurable in `/config`).
@@ -81,6 +82,7 @@ Example:
   "sds_ok": true,
   "sds_awake": true,
   "sds_warm": true,
+  "sds_auto_sleep_ms_left": 85000,
   "co2_ppm": 760,
   "scd41_ok": true,
   "wind_hz": 2.2,
@@ -88,6 +90,7 @@ Example:
   "wind_kmh": 5.4,
   "wind_mph": 3.4,
   "wind_ok": true,
+  "wind_avg_mph_1h": 2.7,
   "uptime": 1234,
   "heap": 176520,
   "flash_free_kb": 2048,
@@ -116,6 +119,8 @@ Example:
   "pressure_trend": "Steady",
   "forecast": "Fair",
   "general_forecast": "Improving / Fair",
+  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph)",
+  "aqi_category": "Good",
   "last_sd_log": "2025-01-01 15:40:00"
 }
 ```
@@ -125,7 +130,10 @@ Example:
   - Pressure includes station pressure (`pressure`, hPa) and MSLP (`mslp_hPa`, `mslp_inHg`).
   - Battery is pack voltage (single-cell Li‑ion) in volts.
   - Rain rate is provided in mm/h and in/h; `rain_unit` indicates current CSV/UI unit.
-  - Wind speed is reported in multiple units; `wind_mph` is commonly used in CSV.
+  - Wind speed is reported in multiple units; `wind_mph` is commonly used in CSV. `wind_avg_mph_1h` is a rolling 1‑hour average sampled once per minute.
+  - UV fields include raw sensor millivolts (`uv_mv`) and an approximate index (`uv_index`).
+  - `aqi_category` is derived from PM2.5 for a simple dashboard label.
+  - When SDS011 is duty-cycled, `sds_auto_sleep_ms_left` shows milliseconds until auto-sleep during the 2‑minute window.
 
 cURL example:
 ```bash

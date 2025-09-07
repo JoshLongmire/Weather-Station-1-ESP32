@@ -162,6 +162,10 @@ unsigned long sdsWarmupUntilMs = 0;  // millis when warm-up ends
 unsigned long sdsLastPacketMs = 0;   // last valid data timestamp
 float sdsPm25 = 0.0f;                // µg/m³
 float sdsPm10 = 0.0f;                // µg/m³
+// Accumulators for averaging while awake and warmed
+uint32_t sdsAccumPm25RawSum = 0;  // sum of raw PM2.5 values (10x µg/m³)
+uint32_t sdsAccumPm10RawSum = 0;  // sum of raw PM10 values (10x µg/m³)
+uint32_t sdsAccumCount = 0;       // number of frames accumulated
 // Small parser buffer for raw frames
 uint8_t sdsBuf[10];
 uint8_t sdsBufPos = 0;
@@ -171,6 +175,35 @@ unsigned long sdsDutyNextToggleMs = 0;
 #if defined(HAVE_SDS_LIB)
 SdsDustSensor sds(sdsSerial);
 #endif
+// Auto-sleep deadline relative to wake (ms); used for 120s serve window alignment
+unsigned long sdsAutoSleepAtMs = 0;
+
+// —— SDS011 raw command frames (vendor protocol) ——
+// 19-byte frames: AA B4 06 01 <01=wake|00=sleep> ... FF FF <sum> AB
+static const uint8_t SDS_WAKE_CMD[19]  = {0xAA,0xB4,0x06,0x01,0x01,0,0,0,0,0,0,0,0,0,0,0xFF,0xFF,0x06,0xAB};
+static const uint8_t SDS_SLEEP_CMD[19] = {0xAA,0xB4,0x06,0x01,0x00,0,0,0,0,0,0,0,0,0,0,0xFF,0xFF,0x05,0xAB};
+
+static inline void sdsSendFrame(const uint8_t* frame) {
+  sdsSerial.write(frame, 19);
+  sdsSerial.flush();
+}
+
+static inline void sdsEnsureWake() {
+#if defined(HAVE_SDS_LIB)
+  sds.wakeup();
+#endif
+  sdsSendFrame(SDS_WAKE_CMD);
+  sdsAwake = true;
+  sdsWarmupUntilMs = millis() + SDS_DUTY_WARMUP_MS;
+}
+
+static inline void sdsEnsureSleep() {
+#if defined(HAVE_SDS_LIB)
+  sds.sleep();
+#endif
+  sdsSendFrame(SDS_SLEEP_CMD);
+  sdsAwake = false;
+}
 #endif
 unsigned long startMillis;
 unsigned long serveWindow;
@@ -220,6 +253,15 @@ portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
 const float WIND_MPH_PER_HZ = 1.52870388047f;
 const float WIND_KMH_PER_HZ = 2.46020633977f;
 const float WIND_MPS_PER_HZ = 0.68339064994f;
+#endif
+
+// —— 1-hour rolling average wind speed (mph), sampled once per minute ——
+#if ENABLE_WIND
+float windAvg1hMph[60] = { 0 };
+uint8_t windAvg1hIndex = 0;
+uint8_t windAvg1hCount = 0;
+float windAvg1hSum = 0.0f;
+unsigned long windAvg1hLastSampleMs = 0;
 #endif
 
 // —— BSEC2 globals ——
@@ -553,6 +595,13 @@ RTC_DATA_ATTR uint32_t pressureHourlyUnix[13] = { 0 };
 RTC_DATA_ATTR uint8_t pressureHourlyCount = 0;
 RTC_DATA_ATTR uint8_t pressureHourlyHead = 0;  // points to next write position
 
+// —— Persist last known PM readings across deep sleep ——
+#if ENABLE_SDS011
+RTC_DATA_ATTR float sdsLastPm25_ugm3 = 0.0f;
+RTC_DATA_ATTR float sdsLastPm10_ugm3 = 0.0f;
+RTC_DATA_ATTR uint32_t sdsLastPmUnix = 0;
+#endif
+
 void updatePressureHistory(float P_hPa, uint32_t nowUnix) {
   // store one sample per hour boundary
   if (pressureHourlyCount == 0) {
@@ -649,6 +698,61 @@ static const char* generalForecastFromSensors(float tempF, float hum,
   if (hum > 85.0f) return "Humid / Overcast";
   if (uvIndex >= 8.0f && lux > 20000.0f) return "High UV / Sunny";
   return "Neutral";
+}
+
+// —— Air quality and risk helpers for richer forecast ——
+static const char* aqiCategoryFromPm25(float pm25ugm3) {
+  if (!isfinite(pm25ugm3) || pm25ugm3 < 0.0f) return "Unknown";
+  if (pm25ugm3 <= 12.0f) return "Good";
+  if (pm25ugm3 <= 35.4f) return "Moderate";
+  if (pm25ugm3 <= 55.4f) return "USG"; // Unhealthy for Sensitive Groups
+  if (pm25ugm3 <= 150.4f) return "Unhealthy";
+  if (pm25ugm3 <= 250.4f) return "Very Unhealthy";
+  return "Hazardous";
+}
+
+static const char* uvRiskCategory(float uvIndex) {
+  if (!isfinite(uvIndex) || uvIndex < 0.0f) return "Unknown";
+  if (uvIndex < 3.0f) return "Low";
+  if (uvIndex < 6.0f) return "Moderate";
+  if (uvIndex < 8.0f) return "High";
+  if (uvIndex < 11.0f) return "Very High";
+  return "Extreme";
+}
+
+static String buildForecastDetail(float tempF, float hum,
+                                  float mslp_hPa, const char* trend,
+                                  float pm25ugm3, float uvIndex,
+                                  float windMph) {
+  String out;
+  out.reserve(112);
+  // Air quality
+  out += "Air: ";
+  out += aqiCategoryFromPm25(pm25ugm3);
+  // UV risk
+  out += " | UV: ";
+  out += uvRiskCategory(uvIndex);
+  // Wind descriptor
+  const char* windLabel = "Calm";
+  if (windMph >= 25.0f) windLabel = "Very Windy";
+  else if (windMph >= 15.0f) windLabel = "Windy";
+  else if (windMph >= 8.0f) windLabel = "Breezy";
+  else if (windMph >= 1.0f) windLabel = "Light";
+  out += " | Wind: ";
+  out += windLabel;
+  out += " (";
+  out += String(windMph, 0);
+  out += " mph)";
+  // Humidity note
+  if (isfinite(hum)) {
+    if (hum >= 85.0f) out += " | Humid";
+    else if (hum <= 30.0f) out += " | Dry";
+  }
+  // Pressure tendency hint
+  if (trend && strcmp(trend, "Falling") == 0 && mslp_hPa < 1008.0f) {
+    out += " | Falling P";
+  }
+  return out;
 }
 
 void blinkStatus(int times, int durationMs) {
@@ -752,10 +856,7 @@ void prepareDeepSleep(uint32_t wakeAfterSeconds) {
 #if ENABLE_SDS011
   // Put SDS011 to sleep to extend sensor life
   if (sdsPresent && sdsAwake) {
-#if defined(HAVE_SDS_LIB)
-    sds.sleep();
-#endif
-    sdsAwake = false;
+    sdsEnsureSleep();
   }
 #endif
 #if ENABLE_SCD41 && defined(HAVE_SCD4X_LIB)
@@ -807,8 +908,8 @@ void performLogging() {
   unsigned long now = millis();
   // Only log when nextLogMillis (scheduled time) has arrived. Initial 0 schedules immediately.
   if ((long)(now - nextLogMillis) < 0) {
-#if ENABLE_SDS011 && defined(HAVE_SDS_LIB)
-    // Ensure SDS011 is ON and warming within the last 2 minutes before the next log
+#if ENABLE_SDS011
+    // Ensure SDS011 is ON and warming within the last minutes before the next log, per preset
     unsigned long timeToNext = (nextLogMillis > now) ? (nextLogMillis - now) : 0;
     if (sdsPresent) {
       // Determine pre-log ON window from preset
@@ -821,14 +922,21 @@ void performLogging() {
 
       if (timeToNext <= preOn) {
         if (!sdsAwake) {
-          sds.wakeup();
-          sdsAwake = true;
-          sdsWarmupUntilMs = now + SDS_DUTY_WARMUP_MS;
+          sdsEnsureWake();
+          // reset accumulators on wake
+          sdsAccumPm25RawSum = 0;
+          sdsAccumPm10RawSum = 0;
+          sdsAccumCount = 0;
+          // If we're in the 2-minute serve window, schedule auto-sleep
+          if (serveWindow == UPTIME_CONFIG) {
+            sdsAutoSleepAtMs = millis() + 115000UL; // warm 30s + 85s sample ≈ 115s total
+          } else {
+            sdsAutoSleepAtMs = 0;
+          }
         }
       } else {
         if (sdsAwake) {
-          sds.sleep();
-          sdsAwake = false;
+          sdsEnsureSleep();
         }
       }
     }
@@ -962,15 +1070,31 @@ void performLogging() {
     float rainInHr = rainRateMmH * 0.0393700787f;
     float rainOut = appCfg.rainUnitInches ? rainInHr : rainRateMmH;
     // Append SDS011 PM values at end (µg/m³); only when sensor is ON and warmed
-    bool sdsReady = sdsPresent && sdsAwake && (millis() >= sdsWarmupUntilMs);
-    float pm25Out = sdsReady ? sdsPm25 : 0.0f;
-    float pm10Out = sdsReady ? sdsPm10 : 0.0f;
+    bool sdsReady = sdsPresent && (millis() >= sdsWarmupUntilMs) && (sdsLastPacketMs != 0);
+    float pm25Out = 0.0f, pm10Out = 0.0f;
+    if (sdsReady) {
+      if (sdsAccumCount > 0) {
+        pm25Out = (float)sdsAccumPm25RawSum / (10.0f * (float)sdsAccumCount);
+        pm10Out = (float)sdsAccumPm10RawSum / (10.0f * (float)sdsAccumCount);
+      } else {
+        pm25Out = sdsPm25;
+        pm10Out = sdsPm10;
+      }
+    }
     // Do not log BSEC2 values (IAQ/eCO2/bVOC): write blank fields for these columns
     f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%s,%s,%s,%.1f,%.1f,%u,%.2f\n",
              timestr, T, H, dewF, hiF, P, trend, gforecast, L, uvMv, uvIdx, Vbat, gasKOhm, mslp_hPa * 0.0295299830714f, rainOut, (unsigned long)bootCount,
              "", "", "",
              pm25Out, pm10Out, (unsigned)scd41Co2Ppm, windMph_log);
     f.close();
+    // Persist last PM values to RTC memory
+#if ENABLE_SDS011
+    if (sdsReady) {
+      sdsLastPm25_ugm3 = pm25Out;
+      sdsLastPm10_ugm3 = pm10Out;
+      sdsLastPmUnix = (uint32_t)nowUnixTs;
+    }
+#endif
     // update in-memory and persisted last log timestamps
     lastSdLogUnix = (uint32_t)nowUnixTs;
     strncpy(lastSdLogTime, timestr, sizeof(lastSdLogTime));
@@ -1183,25 +1307,26 @@ void setup() {
   // SDS011 UART init (1 Hz frames @ 9600)
   sdsSerial.begin(9600, SERIAL_8N1, SDS_RX_PIN, SDS_TX_PIN);
   sdsPresent = true;  // assume present if UART available; adjust if needed
-  // Wake and start warm-up now so first readings are valid soon after boot
+  // Initialize according to preset: only wake immediately when in 'cont' mode; otherwise start asleep
   {
 #if defined(HAVE_SDS_LIB)
     sds.begin();
-    sds.wakeup();
     // Prefer active continuous reporting; ignore result if unsupported
     (void)sds.setActiveReportingMode();
     (void)sds.setWorkingPeriod(0);
-    sdsAwake = true;
-    sdsWarmupUntilMs = millis() + 30000UL;  // 30 s warm-up
-    // Initialize 30s ON / 30s OFF duty cycle while awake
-    sdsDutyOn = true;
-    sdsDutyNextToggleMs = millis() + SDS_DUTY_ON_MS;
+    if (appCfg.sdsMode == "cont") {
+      sds.wakeup();
+      sdsAwake = true;
+      sdsWarmupUntilMs = millis() + SDS_DUTY_WARMUP_MS;
+    } else {
+      // For 'off' and 'pre*' presets, keep sensor asleep until the pre-log window
+      sds.sleep();
+      sdsAwake = false;
+    }
 #else
-    // Library not available; assume device is awake if present
-    sdsAwake = true;
-    sdsWarmupUntilMs = millis() + 30000UL;
-    sdsDutyOn = true;
-    sdsDutyNextToggleMs = millis() + SDS_DUTY_ON_MS;
+    // Library not available; reflect preset logically, physical sleep control not available
+    sdsAwake = (appCfg.sdsMode == "cont");
+    sdsWarmupUntilMs = sdsAwake ? (millis() + SDS_DUTY_WARMUP_MS) : 0;
 #endif
   }
 #endif
@@ -1282,7 +1407,7 @@ void setup() {
     }
   }
 
-  // —— Serve Window & Logging Flags ——
+  // —— Serve Window & Logging Flags —— 
   loggedThisWake = false;
   nightLogDone = false;
   scheduledNightLogMs = 0;
@@ -1293,6 +1418,19 @@ void setup() {
     serveWindow = UPTIME_CONFIG;  // 120 seconds
     // Schedule a mid-window log ~35s after wake for sensor warm-up
     scheduledNightLogMs = millis() + 35000UL;
+    // For SDS011 presets that are not continuous, wake now so we can warm/sense within the 2‑minute window
+#if ENABLE_SDS011
+    if (sdsPresent && appCfg.sdsMode != String("off")) {
+      // Wake immediately; auto-sleep after ~115s to leave slack in the 120s window
+      if (!sdsAwake) {
+        sdsEnsureWake();
+        sdsAccumPm25RawSum = 0;
+        sdsAccumPm10RawSum = 0;
+        sdsAccumCount = 0;
+      }
+      sdsAutoSleepAtMs = millis() + 115000UL;
+    }
+#endif
   } else {
     // Cold boot or manual reset → full startup window, followed by a 2-minute decision run
     serveWindow = UPTIME_STARTUP;  // 1800 seconds
@@ -1356,8 +1494,8 @@ void setup() {
   // Record boot time once per boot
   bootStartUnix = time(nullptr);
   performLogging();
-  // Also record a boot event row inline (no separate function)
-  {
+  // Also record a boot event row only on cold start (not RTC/timer wakes)
+  if (reason != ESP_SLEEP_WAKEUP_EXT0 && reason != ESP_SLEEP_WAKEUP_TIMER) {
     struct tm ti;
     char timestrBoot[32] = "N/A";
     if (getLocalTime(&ti)) {
@@ -1739,6 +1877,11 @@ void handleRoot() {
       <canvas id="windChart"></canvas>
     </div>
     <div class="card">
+      <h4>Wind Avg 1h (mph)</h4>
+      <div id="windAvgVal" class="value">--</div>
+      <canvas id="windAvgChart"></canvas>
+    </div>
+    <div class="card">
       <h4>Batt (V)</h4>
       <div id="batVal" class="value">--</div>
       <canvas id="battChart"></canvas>
@@ -1762,6 +1905,7 @@ void handleRoot() {
     <div class="card">
       <h4>Forecast</h4>
       <div id="forecastVal" class="value">--</div>
+      <div id="forecastDetail" style="opacity:.8;font-size:.9em;margin-top:6px;">&nbsp;</div>
     </div>
     <div class="card">
       <h4>Wet Bulb Temp (°F)</h4>
@@ -1989,9 +2133,17 @@ async function fetchLive() {
   if (document.getElementById('windVal')) {
     document.getElementById('windVal').textContent = Number(o.wind_mph ?? 0).toFixed(1);
   }
+  if (document.getElementById('windAvgVal')) {
+    document.getElementById('windAvgVal').textContent = Number(o.wind_avg_mph_1h ?? 0).toFixed(1);
+  }
   document.getElementById('trendVal').textContent = (o.pressure_trend ?? '');
   if (document.getElementById('forecastVal')) {
     document.getElementById('forecastVal').textContent = (o.general_forecast ?? '');
+  }
+  if (document.getElementById('forecastDetail')) {
+    const base = (o.forecast ?? o.general_forecast ?? '');
+    const det = (o.forecast_detail ?? '');
+    document.getElementById('forecastDetail').textContent = det || base;
   }
   document.getElementById('sdStatus').innerHTML    =
     o.sd_ok    ? '<span style="color:#0f0">&#10003;</span>' 
@@ -2024,6 +2176,7 @@ async function fetchLive() {
     pm10: (o.pm10_ugm3 ?? 0),
     rain: (o.rain_mmph ?? 0),
     wind: (o.wind_mph ?? 0),
+    wind_avg: (o.wind_avg_mph_1h ?? 0),
     // IAQ/eCO2/bVOC removed
   });
   if (liveData.length > MAX_POINTS) liveData.shift();
@@ -2032,6 +2185,7 @@ async function fetchLive() {
   ['temp','hum','pressure','mslp','dew','hi','wbt','lux','uv','batt','voc','co2','rain','wind'].forEach(f => {
     draw(f, f + 'Chart', liveData);
   });
+  draw('wind_avg', 'windAvgChart', liveData);
   if (o.sds_awake && o.sds_warm) {
     draw('pm25', 'pm25Chart', liveData);
     draw('pm10', 'pm10Chart', liveData);
@@ -2254,9 +2408,29 @@ void handleLive() {
   const char* trend = classifyTrendFromDelta(h3 ? d3 : (h6 ? d6 : (h12 ? d12 : 0)));
   const char* forecast = zambrettiSimple(mslp_hPa, trend);
   const char* generalForecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L, uvIdx);
+  // Compose detailed forecast using PM2.5, UV, and wind
+#if ENABLE_WIND
+  float windForDetailMph = windMph;
+#else
+  float windForDetailMph = 0.0f;
+#endif
+#if ENABLE_SDS011
+  float pm25ForDetail = 0.0f;
+  {
+    bool sds_warm = millis() >= sdsWarmupUntilMs;
+    if (sdsPresent) {
+      if (sdsAccumCount > 0) pm25ForDetail = (float)sdsAccumPm25RawSum / (10.0f * (float)sdsAccumCount);
+      else if (sdsAwake && sds_warm) pm25ForDetail = sdsPm25;
+      else if (!sdsAwake && sdsLastPmUnix != 0 && (millis() / 1000UL) < 180UL) pm25ForDetail = sdsLastPm25_ugm3;
+    }
+  }
+#else
+  float pm25ForDetail = 0.0f;
+#endif
+  String forecastDetail = buildForecastDetail(T, H, mslp_hPa, trend, pm25ForDetail, uvIdx, windForDetailMph);
 
   // Build JSON (temp unit per user setting)
-  StaticJsonDocument<768> doc;
+  StaticJsonDocument<896> doc;
   doc["temp_f"] = T;
   doc["temp_c"] = Tc;
   doc["temp_unit"] = appCfg.tempF ? "F" : "C";
@@ -2289,6 +2463,10 @@ void handleLive() {
   doc["wind_kmh"] = windKmh;
   doc["wind_mph"] = windMph;
   doc["wind_ok"] = windOk;
+  // 1-hour rolling average (mph)
+  float windAvg1h = 0.0f;
+  if (windAvg1hCount > 0) windAvg1h = windAvg1hSum / (float)windAvg1hCount;
+  doc["wind_avg_mph_1h"] = windAvg1h;
 #else
   doc["wind_hz"] = 0.0f;
   doc["wind_mps"] = 0.0f;
@@ -2299,11 +2477,26 @@ void handleLive() {
 #if ENABLE_SDS011
   // SDS011 fields
   bool sds_warm = millis() >= sdsWarmupUntilMs;
-  doc["pm25_ugm3"] = (sdsPresent && sdsAwake && sds_warm) ? sdsPm25 : 0.0f;
-  doc["pm10_ugm3"] = (sdsPresent && sdsAwake && sds_warm) ? sdsPm10 : 0.0f;
+  float pm25Live = 0.0f, pm10Live = 0.0f;
+  if (sdsPresent) {
+    if (sdsAccumCount > 0) {
+      pm25Live = (float)sdsAccumPm25RawSum / (10.0f * (float)sdsAccumCount);
+      pm10Live = (float)sdsAccumPm10RawSum / (10.0f * (float)sdsAccumCount);
+    } else if (sdsAwake && sds_warm) {
+      pm25Live = sdsPm25;
+      pm10Live = sdsPm10;
+    } else if (!sdsAwake && sdsLastPmUnix != 0 && (millis() / 1000UL) < 180UL) {
+      // During the brief serve window right after wake, fall back to last recorded values for UI continuity
+      pm25Live = sdsLastPm25_ugm3;
+      pm10Live = sdsLastPm10_ugm3;
+    }
+  }
+  doc["pm25_ugm3"] = pm25Live;
+  doc["pm10_ugm3"] = pm10Live;
   doc["sds_ok"] = sdsPresent;
   doc["sds_awake"] = (bool)sdsAwake;
   doc["sds_warm"] = (bool)(sdsAwake && sds_warm);
+  doc["sds_auto_sleep_ms_left"] = (sdsAutoSleepAtMs && sdsAwake) ? (long)max(0L, (long)(sdsAutoSleepAtMs - millis())) : 0;
 #endif
   // Boot started: compute from current local time minus uptime; format as time only
   {
@@ -2344,6 +2537,8 @@ void handleLive() {
   doc["pressure_trend"] = trend;
   doc["forecast"] = forecast;
   doc["general_forecast"] = generalForecast;
+  doc["forecast_detail"] = forecastDetail;
+  doc["aqi_category"] = aqiCategoryFromPm25(pm25ForDetail);
   // pressure unit removed; UI shows both
   // Last SD log time (persisted across deep sleep); format now per preference
   if (lastSdLogUnix != 0) {
@@ -2402,8 +2597,16 @@ void handleLive() {
       float rainOut_once = appCfg.rainUnitInches ? (rainRateMmH_once * 0.0393700787f) : rainRateMmH_once;
       const char* gforecast_once = generalForecastFromSensors(T, H, mslp_hPa_once, trend, rainRateMmH_once, L, uvIdx);
       // gasKOhm is already read above in the sensor reading section
-      float pm25Out = sdsPresent && millis() >= sdsWarmupUntilMs ? sdsPm25 : 0.0f;
-      float pm10Out = sdsPresent && millis() >= sdsWarmupUntilMs ? sdsPm10 : 0.0f;
+      float pm25Out = 0.0f, pm10Out = 0.0f;
+      if (sdsPresent && millis() >= sdsWarmupUntilMs) {
+        if (sdsAccumCount > 0) {
+          pm25Out = (float)sdsAccumPm25RawSum / (10.0f * (float)sdsAccumCount);
+          pm10Out = (float)sdsAccumPm10RawSum / (10.0f * (float)sdsAccumCount);
+        } else {
+          pm25Out = sdsPm25;
+          pm10Out = sdsPm10;
+        }
+      }
       // Do not log BSEC2 values (IAQ/eCO2/bVOC) in per-/live log either
       f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%s,%s,%s,%.1f,%.1f,%u,%.2f\n",
                timestr, T, H, dewF_once, hiF_once, P, trend, gforecast_once, L, uvMv, uvIdx, v, gasKOhm, mslp_inHg_once, rainOut_once, (unsigned long)bootCount,
@@ -2500,7 +2703,7 @@ void handleViewLogs() {
   html += "<meta http-equiv='Expires' content='0'/>";
   html += "<title>Logs</title>";
   html += "<style>body{background:#121212;color:#eee;font-family:Arial,sans-serif;margin:0;padding:16px;}";
-  html += ".wrap{max-width:1000px;margin:0 auto;}h2{margin:8px 0 16px;}table{width:100%;border-collapse:collapse;background:#1e1e1e;border-radius:6px;overflow:hidden;}";
+  html += ".wrap{max-width:1000px;margin:0 auto;}h2{margin:8px 0 16px;}table{width:90%;margin:0 auto;border-collapse:collapse;background:#1e1e1e;border-radius:6px;overflow:hidden;}";
   html += "th,td{padding:10px;border-bottom:1px solid #2a2a2a;text-align:left;}th{background:#222;}tr:nth-child(even){background:#181818;}";
   html += "a.btn,button.btn{display:inline-block;background:#444;padding:10px 12px;border-radius:6px;color:#eee;text-decoration:none;margin:12px 6px 0 0;}";
   html += ".filters{margin:12px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;} .filters .group{display:flex;gap:8px;align-items:center;} .filters input,.filters select{background:#2a2a2a;color:#eee;border:none;border-radius:6px;padding:8px;} .filters button{background:#3d85c6;color:#fff;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;} .filters button:hover{transform:scale(1.03);}";
@@ -2697,6 +2900,21 @@ void handleSleep() {
   delay(1000);
   blinkStatus(3, 200);
 
+  // Ensure optional sensors are stopped before deep sleep
+#if ENABLE_SDS011
+  if (sdsPresent && sdsAwake) {
+#if defined(HAVE_SDS_LIB)
+    sds.sleep();
+#endif
+    sdsAwake = false;
+  }
+#endif
+#if ENABLE_SCD41 && defined(HAVE_SCD4X_LIB)
+  if (scd41Ok) {
+    scd4x.stopPeriodicMeasurement();
+  }
+#endif
+
   if (rtcOkFlag) {
     rtc.clearAlarm(1);
     DateTime t = rtc.now();
@@ -2757,6 +2975,56 @@ void loop() {
     }
   }
 #endif
+#if ENABLE_WIND
+  // ─── 1-hour rolling wind average sampler (once per minute) ───
+  if (now - windAvg1hLastSampleMs >= 60000UL || windAvg1hLastSampleMs == 0) {
+    // Compute instantaneous wind frequency using last ~1.5 s of pulses
+    uint8_t sizeCopyW, headCopyW;
+    uint32_t timesCopyW[128];
+    portENTER_CRITICAL(&windMux);
+    sizeCopyW = windPulseSize;
+    headCopyW = windPulseHead;
+    for (uint8_t i = 0; i < sizeCopyW; i++) {
+      int idx = (headCopyW + 128 - 1 - i) % 128;
+      timesCopyW[i] = windPulseTimesMs[idx];
+    }
+    portEXIT_CRITICAL(&windMux);
+    unsigned long nowMs2 = millis();
+    const uint32_t WINDOW_MS = 1500UL;
+    uint32_t cutoff = nowMs2 > WINDOW_MS ? (nowMs2 - WINDOW_MS) : 0;
+    uint32_t counted = 0;
+    uint32_t oldest = nowMs2;
+    for (uint8_t i = 0; i < sizeCopyW; i++) {
+      if (timesCopyW[i] >= cutoff) {
+        counted++;
+        if (timesCopyW[i] < oldest) oldest = timesCopyW[i];
+      } else break;
+    }
+    float windHz_inst = 0.0f;
+    if (counted >= 2) {
+      float span = (float)(nowMs2 - oldest) / 1000.0f;
+      if (span < 0.05f) span = 0.05f;
+      windHz_inst = ((float)counted) / span;
+    } else if (counted == 1) {
+      uint32_t dt = nowMs2 - timesCopyW[0];
+      if (dt > 0 && dt <= WINDOW_MS) windHz_inst = 1000.0f / (float)dt;
+    }
+    float mph = windHz_inst * WIND_MPH_PER_HZ;
+    // Update rolling 60-sample window
+    if (windAvg1hCount < 60) {
+      windAvg1hMph[windAvg1hIndex] = mph;
+      windAvg1hSum += mph;
+      windAvg1hCount++;
+      windAvg1hIndex = (windAvg1hIndex + 1) % 60;
+    } else {
+      windAvg1hSum -= windAvg1hMph[windAvg1hIndex];
+      windAvg1hMph[windAvg1hIndex] = mph;
+      windAvg1hSum += mph;
+      windAvg1hIndex = (windAvg1hIndex + 1) % 60;
+    }
+    windAvg1hLastSampleMs = now;
+  }
+#endif
 #if ENABLE_SDS011
   // Read SDS011 frames when available; parse 10-byte packet 0xAA 0xC0 ... 0xAB
   while (sdsSerial.available()) {
@@ -2773,6 +3041,12 @@ void loop() {
           uint16_t pm10 = (uint16_t)sdsBuf[4] | ((uint16_t)sdsBuf[5] << 8);
           sdsPm25 = pm25 / 10.0f;
           sdsPm10 = pm10 / 10.0f;
+          // Accumulate raw values to average later during wake window
+          if (millis() >= sdsWarmupUntilMs) {
+            sdsAccumPm25RawSum += pm25;
+            sdsAccumPm10RawSum += pm10;
+            sdsAccumCount++;
+          }
           sdsLastPacketMs = millis();
           if (appCfg.debugVerbose && millis() >= sdsWarmupUntilMs) {
             Serial.printf("[SDS011] PM25=%.1f PM10=%.1f\n", sdsPm25, sdsPm10);
@@ -2781,6 +3055,19 @@ void loop() {
       }
       sdsBufPos = 0;
     }
+  }
+  // Auto-sleep enforcement in 2‑minute serve window, using vendor frames
+  if (sdsAwake && sdsAutoSleepAtMs != 0 && millis() >= sdsAutoSleepAtMs) {
+    sdsEnsureSleep();
+    // Finalize averaged PM values for this wake
+    if (sdsAccumCount > 0) {
+      sdsPm25 = (float)sdsAccumPm25RawSum / (10.0f * (float)sdsAccumCount);
+      sdsPm10 = (float)sdsAccumPm10RawSum / (10.0f * (float)sdsAccumCount);
+    }
+    sdsAccumPm25RawSum = 0;
+    sdsAccumPm10RawSum = 0;
+    sdsAccumCount = 0;
+    sdsAutoSleepAtMs = 0;
   }
 #endif
 

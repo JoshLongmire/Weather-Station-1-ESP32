@@ -11,7 +11,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ## Features
 
-- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light)
+- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
 - **Time:** DS3231 RTC (preferred) with NTP fallback
 - **Connectivity:** Wi‑Fi Station with AP fallback, mDNS (configurable hostname)
@@ -130,17 +130,19 @@ After boot and Wi‑Fi join, open:
   "hum": 43.2,
   "pressure": 1013.62,
   "lux": 455,
-  "batt": 4.07,
-  "voc_kohm": 12.5,
   "uv_mv": 320,
   "uv_index": 3.2,
+  "batt": 4.07,
+  "voc_kohm": 12.5,
   "pm25_ugm3": 8.5,
   "pm10_ugm3": 12.1,
   "sds_ok": true,
   "sds_awake": true,
   "sds_warm": true,
+  "sds_auto_sleep_ms_left": 85000,
   "co2_ppm": 760,
   "wind_mph": 3.4,
+  "wind_avg_mph_1h": 2.7,
   "dew_f": 50.3,
   "hi_f": 73.9,
   "wbt_f": 54.4,
@@ -149,6 +151,8 @@ After boot and Wi‑Fi join, open:
   "pressure_trend": "Steady",
   "forecast": "Fair",
   "general_forecast": "Improving / Fair",
+  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph)",
+  "aqi_category": "Good",
   "rain_mmph": 0.28,
   "rain_inph": 0.01,
   "rain_unit": "mm/h",
@@ -183,7 +187,7 @@ timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,4.07,12.5,30.10,0.28,123
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4
 ```
 
 Note: After the initial startup log, an extra boot event row is appended containing only the timestamp and `boot_count` (other numeric columns blank). Clearing logs via `/reset` writes the extended header above.
@@ -256,4 +260,5 @@ Wi‑Fi networks are managed via:
 ## Credits
 - Main enclosure based on [Thingiverse model](https://www.thingiverse.com/thing:4094861)
 - Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter)
+- Wind anemometer: [Wind speed gauge anemometer v3.0](https://www.printables.com/model/625326-wind-speed-gauge-anemometer-v30) by shermluge on Printables
 Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), and the Arduino community.
