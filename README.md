@@ -276,13 +276,14 @@ Wi‑Fi networks are managed via:
 ## Roadmap (ideas)
 
 - Optional AQ modules: MiCS‑5524, SCD41  
-- Power metering: INA3221 (I have Just need to weire)
-- Wind subsystem: wind vane, accelerometer  (I have hall sensors)
+- Power metering: INA3221 (tried to wire,)
 - RGB LED Status debugging
 
 ---
 
 ## Implemented Hardware
+- [Added Wind subsystem: Accelerometer, Wind vane ](https://a.co/d/0iTu9BR) connected to [PCF8574T PCF8574 IO Expansion Board Module I2C](https://a.co/d/fuVj1YV)
+- [Added a SCD41](https://a.co/d/65sVqnm)
 - [UV sensing: S12SD UV Index](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Solar/charging: 900 mA MPPT controller (Efficiency approved)](https://www.amazon.com/dp/B07MML4YJV?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909)
