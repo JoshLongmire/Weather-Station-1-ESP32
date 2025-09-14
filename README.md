@@ -282,7 +282,7 @@ Wi‑Fi networks are managed via:
 ---
 
 ## Implemented Hardware
-- [Added Wind subsystem: Accelerometer, Wind vane ](https://a.co/d/0iTu9BR) connected to [PCF8574T PCF8574 IO Expansion Board Module I2C](https://a.co/d/fuVj1YV)
+- [Added Wind subsystem: Accelerometer, the Wind Vane ](https://a.co/d/0iTu9BR)is connected to [PCF8574T PCF8574 IO Expansion Board Module](https://a.co/d/fuVj1YV)
 - [Added a SCD41](https://a.co/d/65sVqnm)
 - [UV sensing: S12SD UV Index](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Solar/charging: 900 mA MPPT controller (Efficiency approved)](https://www.amazon.com/dp/B07MML4YJV?ref=ppx_yo2ov_dt_b_fed_asin_title)
