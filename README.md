@@ -3,7 +3,8 @@
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
 
 <p align="center">
-  <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="32%">
+  <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="60%">
+  <br><br>
   <img alt="Wind Speed Gauge Anemometer" src="docs/WindspeedgaugeAnemometer.jpg" width="32%">
   <img alt="Rain Gauge Tipping Bucket" src="docs/RainGaugeTippingBucketRainMeter.jpg" width="32%">
 </p>
