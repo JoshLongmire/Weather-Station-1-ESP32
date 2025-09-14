@@ -35,12 +35,12 @@ File: `/logs.csv`
 
 Header created by Reset (extended v18+):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
 ```
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4,NE
 ```
 
 Notes:
@@ -91,6 +91,9 @@ Example:
   "wind_mph": 3.4,
   "wind_ok": true,
   "wind_avg_mph_1h": 2.7,
+  "wind_dir": "NE",
+  "wind_dir_idx": 1,
+  "wind_vane_ok": true,
   "uptime": 1234,
   "heap": 176520,
   "flash_free_kb": 2048,
@@ -131,6 +134,7 @@ Example:
   - Battery is pack voltage (single-cell Li‑ion) in volts.
   - Rain rate is provided in mm/h and in/h; `rain_unit` indicates current CSV/UI unit.
   - Wind speed is reported in multiple units; `wind_mph` is commonly used in CSV. `wind_avg_mph_1h` is a rolling 1‑hour average sampled once per minute.
+  - Wind direction uses an 8‑point compass: `N, NE, E, SE, S, SW, W, NW`. Fields: `wind_dir` (text), `wind_dir_idx` (0..7), `wind_vane_ok` (bool).
   - UV fields include raw sensor millivolts (`uv_mv`) and an approximate index (`uv_index`).
   - `aqi_category` is derived from PM2.5 for a simple dashboard label.
   - When SDS011 is duty-cycled, `sds_auto_sleep_ms_left` shows milliseconds until auto-sleep during the 2‑minute window.

@@ -52,6 +52,11 @@
 #define ENABLE_WIND 1
 #endif
 
+// —— Optional: Wind vane via PCF8574 I²C expander ——
+#ifndef ENABLE_WINDVANE
+#define ENABLE_WINDVANE 1
+#endif
+
 
 // —— Pin & Address Definitions ——
 //#define LED_PIN            2
@@ -138,6 +143,7 @@ WebServer server(80);
 Preferences preferences;
 DynamicJsonDocument wifiConfig(4096);
 Adafruit_BME680 bme;  // BME680: temp, hum, pressure, gas
+bool bmeOk = false;   // health flag for BME680
 //Adafruit_SGP40        sgp;
 Adafruit_VEML7700 lightMeter;
 #if ENABLE_SCD41 && defined(HAVE_SCD4X_LIB)
@@ -253,6 +259,24 @@ portMUX_TYPE windMux = portMUX_INITIALIZER_UNLOCKED;
 const float WIND_MPH_PER_HZ = 1.52870388047f;
 const float WIND_KMH_PER_HZ = 2.46020633977f;
 const float WIND_MPS_PER_HZ = 0.68339064994f;
+#endif
+
+// —— Wind vane (PCF8574) state ——
+#if ENABLE_WINDVANE
+  // Detect PCF8574 addresses 0x20-0x27 only
+  bool windVaneOk = false;
+  uint8_t windVaneAddr = 0x20;
+  // Most wind vane boards pull the line LOW when magnet is present
+  static const bool WINDVANE_ACTIVE_LOW = true;
+  // PCF quirk: write 1 to use pin as input
+  uint8_t wvPcfLatch = 0xFF;
+  // Cardinal directions clockwise starting at North
+  static const char* WIND_DIRS[8] = { "N", "NW", "W", "SW", "S", "SE", "E", "NE" };
+  // Last sampled mask and decoded index (-1 unknown)
+  volatile uint8_t windDirLastMask = 0x00;
+  volatile int windDirIdx = -1;
+  // Last valid direction for dead zone handling
+  String lastValidWindDir = "";
 #endif
 
 // —— 1-hour rolling average wind speed (mph), sampled once per minute ——
@@ -513,6 +537,87 @@ float computeUvIndexCalibrated(float uvMilliVolts) {
 
 // BSEC2 constants will be available from bsec2.h when library is present
 
+#if ENABLE_WINDVANE
+// ===== Wind vane (PCF8574) helpers =====
+static inline void wvPcfWrite(uint8_t v) {
+  Wire.beginTransmission((int)windVaneAddr);
+  Wire.write(v);
+  Wire.endTransmission();
+  wvPcfLatch = v;
+}
+
+static inline uint8_t wvPcfReadRaw() {
+  Wire.requestFrom((int)windVaneAddr, 1);
+  return Wire.available() ? Wire.read() : 0xFF;
+}
+
+// Popcount and count trailing zeros without relying on compiler builtins
+static inline int wvPopcount8(uint8_t x) {
+  int c = 0; while (x) { c += (x & 1); x >>= 1; } return c;
+}
+static inline int wvCtz8(uint8_t x) {
+  for (int i = 0; i < 8; ++i) { if (x & (1 << i)) return i; } return 8;
+}
+
+// Majority vote of 3 quick samples; return mask where active bit = 1
+static uint8_t wvStableReadActiveMask() {
+  uint8_t r1 = wvPcfReadRaw();
+  delayMicroseconds(300);
+  uint8_t r2 = wvPcfReadRaw();
+  delayMicroseconds(300);
+  uint8_t r3 = wvPcfReadRaw();
+  uint8_t majority = (r1 & r2) | (r2 & r3) | (r1 & r3);
+  return WINDVANE_ACTIVE_LOW ? (uint8_t)~majority : majority;
+}
+
+// Return 0..7 when exactly one bit, -100 none, -200 multi
+static int wvDecodeIndex(uint8_t m) {
+  if (m == 0) return -100;
+  if ((m & (m - 1)) == 0) return wvCtz8(m);
+  return -200;
+}
+
+// If exactly two adjacent bits in the 8-ring, return true and set a,b
+static bool wvTwoAdjacent(uint8_t m, int &a, int &b) {
+  if (wvPopcount8(m) != 2) return false;
+  int first = wvCtz8(m);
+  int second = wvCtz8(m & ~(1 << first));
+  int diff = (second - first + 8) % 8;
+  if (diff == 1 || diff == 7) { a = first; b = second; return true; }
+  return false;
+}
+
+// Read and decode direction once; returns text and sets outIdx (or -1)
+static String wvReadDirection(int *outIdx) {
+  if (!windVaneOk) { 
+    if (outIdx) *outIdx = -1; 
+    return lastValidWindDir.length() > 0 ? lastValidWindDir : String("N/A"); 
+  }
+  uint8_t mask = wvStableReadActiveMask();
+  windDirLastMask = mask;
+  int idx = wvDecodeIndex(mask);
+  if (idx >= 0 && idx < 8) {
+    windDirIdx = idx;
+    lastValidWindDir = String(WIND_DIRS[idx]);  // Remember valid direction
+    if (outIdx) *outIdx = idx;
+    return lastValidWindDir;
+  }
+  int a, b;
+  if (wvTwoAdjacent(mask, a, b)) {
+    // Normalize order clockwise (a -> b); pick a to keep 8-point compass
+    if (((b - a + 8) % 8) != 1) { int t = a; a = b; b = t; }
+    windDirIdx = a;
+    lastValidWindDir = String(WIND_DIRS[a]);  // Remember valid direction
+    if (outIdx) *outIdx = a;
+    return lastValidWindDir;
+  }
+  // Dead zone - return last valid direction if we have one
+  windDirIdx = -1;
+  if (outIdx) *outIdx = -1;
+  return lastValidWindDir.length() > 0 ? lastValidWindDir : String("--");
+}
+#endif
+
 // ===== Config persisted in Preferences ('app' namespace) =====
 struct AppConfig {
   float altitudeM;  // meters
@@ -723,9 +828,9 @@ static const char* uvRiskCategory(float uvIndex) {
 static String buildForecastDetail(float tempF, float hum,
                                   float mslp_hPa, const char* trend,
                                   float pm25ugm3, float uvIndex,
-                                  float windMph) {
+                                  float windMph, const char* windDir) {
   String out;
-  out.reserve(112);
+  out.reserve(128); // Increased reserve for wind direction
   // Air quality
   out += "Air: ";
   out += aqiCategoryFromPm25(pm25ugm3);
@@ -742,7 +847,13 @@ static String buildForecastDetail(float tempF, float hum,
   out += windLabel;
   out += " (";
   out += String(windMph, 0);
-  out += " mph)";
+  out += " mph";
+  // Add wind direction if available and valid
+  if (windDir && strlen(windDir) > 0 && strcmp(windDir, "--") != 0) {
+    out += " ";
+    out += windDir;
+  }
+  out += ")";
   // Humidity note
   if (isfinite(hum)) {
     if (hum >= 85.0f) out += " | Humid";
@@ -948,12 +1059,15 @@ void performLogging() {
   // —— read sensors (BME680) ——
   float Tc = 0.0f, T = 0.0f, H = 0.0f, P = 0.0f, gasKOhm = 0.0f;
 
-  // BSEC2 disabled, use regular BME680
-  bme.performReading();
-  Tc = bme.temperature;
-  H = bme.humidity;
-  P = bme.pressure / 100.0f;
-  gasKOhm = bme.gas_resistance / 1000.0f;
+  // BSEC2 disabled, use regular BME680 with guard
+  if (bmeOk && bme.performReading()) {
+    Tc = bme.temperature;
+    H = bme.humidity;
+    P = bme.pressure / 100.0f;
+    gasKOhm = bme.gas_resistance / 1000.0f;
+  } else {
+    Tc = 0.0f; H = 0.0f; P = 0.0f; gasKOhm = 0.0f;
+  }
 
   T = Tc * 9.0f / 5.0f + 32.0f;
   float L = readLux();
@@ -1066,7 +1180,7 @@ void performLogging() {
     float mslp_hPa = computeMSLP_hPa(P, Tc, appCfg.altitudeM);
     float rainRateMmH = tipsLastHour * MM_PER_TIP;
     const char* gforecast = generalForecastFromSensors(T, H, mslp_hPa, trend, rainRateMmH, L, uvIdx);
-    // CSV (extended): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,iaq,eco2_ppm,bvoc_ppm,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph
+    // CSV (extended): timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,iaq,eco2_ppm,bvoc_ppm,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
     float rainInHr = rainRateMmH * 0.0393700787f;
     float rainOut = appCfg.rainUnitInches ? rainInHr : rainRateMmH;
     // Append SDS011 PM values at end (µg/m³); only when sensor is ON and warmed
@@ -1081,11 +1195,17 @@ void performLogging() {
         pm10Out = sdsPm10;
       }
     }
-    // Do not log BSEC2 values (IAQ/eCO2/bVOC): write blank fields for these columns
-    f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%s,%s,%s,%.1f,%.1f,%u,%.2f\n",
+    // Get wind direction for logging
+#if ENABLE_WINDVANE
+    int windDirIdx_log = -1;
+    String windDir_log = wvReadDirection(&windDirIdx_log);
+#else
+    String windDir_log = "";
+#endif
+    // Align with 21-column header: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
+    f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%.1f,%.1f,%u,%.2f,%s\n",
              timestr, T, H, dewF, hiF, P, trend, gforecast, L, uvMv, uvIdx, Vbat, gasKOhm, mslp_hPa * 0.0295299830714f, rainOut, (unsigned long)bootCount,
-             "", "", "",
-             pm25Out, pm10Out, (unsigned)scd41Co2Ppm, windMph_log);
+             pm25Out, pm10Out, (unsigned)scd41Co2Ppm, windMph_log, windDir_log.c_str());
     f.close();
     // Persist last PM values to RTC memory
 #if ENABLE_SDS011
@@ -1148,7 +1268,7 @@ void performLogging();                             // prototype
 float readLux();                                   // prototype (if readLux defined later)
 void updateDayNightState();                        // prototype
 void prepareDeepSleep(uint32_t wakeAfterSeconds);  // prototype
-void logBootEvent();                               // prototype
+// void logBootEvent();                               // prototype (unused)
 
 
 void updateDayNightState() {
@@ -1256,6 +1376,22 @@ void setup() {
 
   // Initialize I²C bus before accessing any I²C peripherals (RTC, sensors)
   Wire.begin(I2C_SDA, I2C_SCL);
+#if ENABLE_WINDVANE
+  // Detect PCF8574 at addresses 0x20-0x27 only
+  windVaneOk = false;
+  for (uint8_t addr = 0x20; addr <= 0x27 && !windVaneOk; ++addr) {
+    Wire.beginTransmission(addr);
+    if (Wire.endTransmission() == 0) { windVaneAddr = addr; windVaneOk = true; }
+  }
+  if (windVaneOk) {
+    // Set all pins as inputs (write 1s) and clear any pending state
+    wvPcfWrite(0xFF);
+    (void)wvPcfReadRaw();
+    Serial.printf("✅ Wind vane PCF8574 detected at 0x%02X\n", windVaneAddr);
+  } else {
+    Serial.println("⚠️ Wind vane PCF8574 not found (checked 0x20-0x27)");
+  }
+#endif
 #if ENABLE_SCD41 && defined(HAVE_SCD4X_LIB)
   // Quick I2C probe for SCD41 at 0x62
   Wire.beginTransmission(0x62);
@@ -1306,7 +1442,7 @@ void setup() {
 #if ENABLE_SDS011
   // SDS011 UART init (1 Hz frames @ 9600)
   sdsSerial.begin(9600, SERIAL_8N1, SDS_RX_PIN, SDS_TX_PIN);
-  sdsPresent = true;  // assume present if UART available; adjust if needed
+  sdsPresent = false;  // will set true after parsing a valid frame
   // Initialize according to preset: only wake immediately when in 'cont' mode; otherwise start asleep
   {
 #if defined(HAVE_SDS_LIB)
@@ -1324,7 +1460,7 @@ void setup() {
       sdsAwake = false;
     }
 #else
-    // Library not available; reflect preset logically, physical sleep control not available
+    // Library not available; keep logical state; presence will be inferred from frames
     sdsAwake = (appCfg.sdsMode == "cont");
     sdsWarmupUntilMs = sdsAwake ? (millis() + SDS_DUTY_WARMUP_MS) : 0;
 #endif
@@ -1440,7 +1576,7 @@ void setup() {
 
 
   // —— I²C & Sensor Initialization ——
-  bool bmeOk = false;
+  bmeOk = false;
 
 //#if ENABLE_BSEC2 && defined(HAVE_BSEC2_LIB)
   // BSEC2 disabled → initialize regular Adafruit_BME680 only
@@ -1504,9 +1640,9 @@ void setup() {
     }
     File fboot = SD.open("/logs.csv", FILE_APPEND);
     if (fboot) {
-      // Extended schema: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,iaq,eco2_ppm,bvoc_ppm
+      // Extended schema: timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
       // For boot row we leave numeric fields empty and include boot_count only
-      fboot.printf("%s,,,,,,,,,,,,,,,%lu\n", timestrBoot, (unsigned long)bootCount);
+      fboot.printf("%s,,,,,,,,,,,,,,,,,,,%lu,,\n", timestrBoot, (unsigned long)bootCount);
       fboot.close();
     }
   }
@@ -1810,6 +1946,9 @@ void handleRoot() {
       <div class="item"><b>PM10 (µg/m³)</b><span>Good ≤54; Moderate 55–154; Unhealthy (SG) 155–254; Unhealthy >254.</span></div>
       <div class="item"><b>CO₂ (ppm)</b><span>Good ≤800; Moderate 800–1200; High 1200–2000; Very High >2000.</span></div>
       <div class="item"><b>Rain</b><span>Rate in mm/h or in/h (Config). Based on tipping bucket last hour.</span></div>
+      <div class="item"><b>Wind (mph)</b><span>Instantaneous wind speed from Hall anemometer.</span></div>
+      <div class="item"><b>Wind Avg 1h</b><span>Rolling 1-hour average wind speed (mph).</span></div>
+      <div class="item"><b>Wind Dir</b><span>8-point compass direction (N, NE, E, SE, S, SW, W, NW).</span></div>
       <div class="item"><b>Batt (V)</b><span>Battery voltage; header shows estimated %.</span></div>
       <div class="item"><b>Dew/Heat/Wet Bulb</b><span>Derived comfort metrics from Temp and Humidity.</span></div>
       <div class="item"><b>Trend/Forecast</b><span>Pressure trend over time and brief outlook.</span></div>
@@ -1880,6 +2019,10 @@ void handleRoot() {
       <h4>Wind Avg 1h (mph)</h4>
       <div id="windAvgVal" class="value">--</div>
       <canvas id="windAvgChart"></canvas>
+    </div>
+    <div class="card">
+      <h4>Wind Dir</h4>
+      <div id="windDirVal" class="value">--</div>
     </div>
     <div class="card">
       <h4>Batt (V)</h4>
@@ -1970,10 +2113,7 @@ void handleRoot() {
       <h4>SD OK?</h4>
       <div id="sdStatus" class="value">--</div>
     </div>
-    <div class="card">
-      <h4>BSEC2 OK?</h4>
-      <div id="bsecStatus" class="value">--</div>
-    </div>
+    
     <div class="card">
       <h4>Boot Count</h4>
       <div id="bootCountVal" class="value">--</div>
@@ -2136,6 +2276,14 @@ async function fetchLive() {
   if (document.getElementById('windAvgVal')) {
     document.getElementById('windAvgVal').textContent = Number(o.wind_avg_mph_1h ?? 0).toFixed(1);
   }
+  if (document.getElementById('windDirVal')) {
+    let wd = (o.wind_dir ?? '').trim();
+    // Show valid compass directions, or N/A only when vane not detected
+    if (!wd || !['N', 'NW', 'W', 'SW', 'S', 'SE', 'E', 'NE'].includes(wd)) {
+      wd = (o.wind_vane_ok === false) ? 'N/A' : '--';
+    }
+    document.getElementById('windDirVal').textContent = wd;
+  }
   document.getElementById('trendVal').textContent = (o.pressure_trend ?? '');
   if (document.getElementById('forecastVal')) {
     document.getElementById('forecastVal').textContent = (o.general_forecast ?? '');
@@ -2232,13 +2380,16 @@ void handleLive() {
   // Read sensor data - use BSEC2 if available, otherwise fall back to regular BME680
   float Tc = 0.0f, T = 0.0f, H = 0.0f, P = 0.0f, gasKOhm = 0.0f;
 
-  // BSEC2 disabled, use regular BME680
+  // BSEC2 disabled, use regular BME680 with guard
   if (appCfg.debugVerbose) Serial.println("🔍 Using regular BME680 library...");
-  bme.performReading();
-  Tc = bme.temperature;
-  H = bme.humidity;
-  P = bme.pressure / 100.0f;
-  gasKOhm = bme.gas_resistance / 1000.0f;
+  if (bmeOk && bme.performReading()) {
+    Tc = bme.temperature;
+    H = bme.humidity;
+    P = bme.pressure / 100.0f;
+    gasKOhm = bme.gas_resistance / 1000.0f;
+  } else {
+    Tc = 0.0f; H = 0.0f; P = 0.0f; gasKOhm = 0.0f;
+  }
   iaq = 0.0f;
   eco2 = 0.0f;
   bvoc = 0.0f;
@@ -2414,6 +2565,14 @@ void handleLive() {
 #else
   float windForDetailMph = 0.0f;
 #endif
+  // Get wind direction for forecast detail
+#if ENABLE_WINDVANE
+  int windDirIdxForDetail = -1;
+  String windDirForDetail = wvReadDirection(&windDirIdxForDetail);
+  const char* windDirForDetailCStr = (windDirForDetail.length() > 0) ? windDirForDetail.c_str() : "";
+#else
+  const char* windDirForDetailCStr = "";
+#endif
 #if ENABLE_SDS011
   float pm25ForDetail = 0.0f;
   {
@@ -2427,10 +2586,10 @@ void handleLive() {
 #else
   float pm25ForDetail = 0.0f;
 #endif
-  String forecastDetail = buildForecastDetail(T, H, mslp_hPa, trend, pm25ForDetail, uvIdx, windForDetailMph);
+  String forecastDetail = buildForecastDetail(T, H, mslp_hPa, trend, pm25ForDetail, uvIdx, windForDetailMph, windDirForDetailCStr);
 
   // Build JSON (temp unit per user setting)
-  StaticJsonDocument<896> doc;
+  StaticJsonDocument<1536> doc;
   doc["temp_f"] = T;
   doc["temp_c"] = Tc;
   doc["temp_unit"] = appCfg.tempF ? "F" : "C";
@@ -2539,6 +2698,25 @@ void handleLive() {
   doc["general_forecast"] = generalForecast;
   doc["forecast_detail"] = forecastDetail;
   doc["aqi_category"] = aqiCategoryFromPm25(pm25ForDetail);
+  // Wind vane direction (8-point compass)
+#if ENABLE_WINDVANE
+  {
+    int dirIdxTemp = -1;
+    String dirText = wvReadDirection(&dirIdxTemp);
+    if (dirText.length() > 0) {
+      doc["wind_dir"] = dirText;
+      doc["wind_dir_idx"] = dirIdxTemp;
+    } else {
+      doc["wind_dir"] = "";
+      doc["wind_dir_idx"] = -1;
+    }
+    doc["wind_vane_ok"] = windVaneOk;
+  }
+#else
+  doc["wind_dir"] = "";
+  doc["wind_dir_idx"] = -1;
+  doc["wind_vane_ok"] = false;
+#endif
   // pressure unit removed; UI shows both
   // Last SD log time (persisted across deep sleep); format now per preference
   if (lastSdLogUnix != 0) {
@@ -2607,10 +2785,9 @@ void handleLive() {
           pm10Out = sdsPm10;
         }
       }
-      // Do not log BSEC2 values (IAQ/eCO2/bVOC) in per-/live log either
-      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%s,%s,%s,%.1f,%.1f,%u,%.2f\n",
+      // Align with 20-column header
+      f.printf("%s,%.1f,%.1f,%.1f,%.1f,%.2f,%s,%s,%.1f,%.0f,%.1f,%.2f,%.1f,%.2f,%.2f,%lu,%.1f,%.1f,%u,%.2f\n",
                timestr, T, H, dewF_once, hiF_once, P, trend, gforecast_once, L, uvMv, uvIdx, v, gasKOhm, mslp_inHg_once, rainOut_once, (unsigned long)bootCount,
-               "", "", "",
                pm25Out, pm10Out, (unsigned)scd41Co2Ppm, windMph);
       f.close();
       // Persist unix timestamp as well for formatting per user preference later
@@ -2731,10 +2908,11 @@ void handleViewLogs() {
   html += "<option value='14'>Rain</option>";           // numeric, unit shown in header
   html += "<option value='15'>Boot Count</option>";     // numeric
   // BSEC2 metrics removed from filters
-  html += "<option value='19'>PM2.5 (µg/m³)</option>";  // numeric
-  html += "<option value='20'>PM10 (µg/m³)</option>";   // numeric
-  html += "<option value='21'>CO2 (ppm)</option>";      // numeric
-  html += "<option value='22'>Wind (mph)</option>";     // numeric
+  // Indices based on 0-based table columns: Time=0, Temp=1, ..., Boot=15, PM2.5=16, PM10=17, CO2=18, Wind=19
+  html += "<option value='16'>PM2.5 (µg/m³)</option>";  // numeric
+  html += "<option value='17'>PM10 (µg/m³)</option>";   // numeric
+  html += "<option value='18'>CO2 (ppm)</option>";      // numeric
+  html += "<option value='19'>Wind (mph)</option>";     // numeric
   html += "</select></div>";
   html += "<div class='group'><label>Type</label><select id='fType'>";
   html += "<option value='between'>Between</option>";
@@ -2750,7 +2928,7 @@ void handleViewLogs() {
   // Friendly headers
   html += "<table><thead><tr>";
   String rainHdr = appCfg.rainUnitInches ? "Rain (in/h)" : "Rain (mm/h)";
-  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>UV (mV)</th><th>UV Index</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>MSLP (inHg)</th><th>" + rainHdr + "</th><th>Boot Count</th><th>PM2.5 (µg/m³)</th><th>PM10 (µg/m³)</th><th>CO₂ (ppm)</th><th>Wind (mph)</th>";
+  html += "<th>Time</th><th>Temp (F)</th><th>Hum (%)</th><th>Dew Pt (F)</th><th>Heat Index (F)</th><th>Pressure (hPa)</th><th>Trend</th><th>Forecast</th><th>Lux</th><th>UV (mV)</th><th>UV Index</th><th>Battery (V)</th><th>VOC (kΩ)</th><th>MSLP (inHg)</th><th>" + rainHdr + "</th><th>Boot Count</th><th>PM2.5 (µg/m³)</th><th>PM10 (µg/m³)</th><th>CO₂ (ppm)</th><th>Wind (mph)</th><th>Wind Dir</th>";
   html += "</tr></thead><tbody>";
 
   // Skip the CSV header if present
@@ -2759,12 +2937,12 @@ void handleViewLogs() {
 
   for (size_t i = startIdx; i < lines.size(); ++i) {
     String ln = lines[i];
-    // Split by comma into up to 28 fields (supports extended schema)
-    String cols[28];
+    // Split by comma into up to 21 fields (supports extended schema with wind_dir)
+    String cols[21];
     int col = 0;
     int from = 0;
     int idx;
-    while (col < 24 && (idx = ln.indexOf(',', from)) >= 0) {
+    while (col < 20 && (idx = ln.indexOf(',', from)) >= 0) {
       cols[col++] = ln.substring(from, idx);
       from = idx + 1;
     }
@@ -2790,6 +2968,11 @@ void handleViewLogs() {
       html += "<td></td>";                 // mslp empty
       html += "<td></td>";                 // rain empty
       html += "<td></td>";                 // boot_count empty
+      html += "<td></td>";                 // PM2.5 empty
+      html += "<td></td>";                 // PM10 empty
+      html += "<td></td>";                 // CO2 empty
+      html += "<td></td>";                 // Wind mph empty
+      html += "<td></td>";                 // Wind Dir empty
     } else {
       html += "<td>" + cols[3] + "</td>";                             // dew_f
       html += "<td>" + cols[4] + "</td>";                             // hi_f
@@ -2804,11 +2987,12 @@ void handleViewLogs() {
       html += "<td>" + (col > 13 ? cols[13] : String("")) + "</td>";  // mslp_inHg
       html += "<td>" + (col > 14 ? cols[14] : String("")) + "</td>";  // rain (unit per setting at write time)
       html += "<td>" + (col > 15 ? cols[15] : String("")) + "</td>";  // boot_count
-      // BSEC2 columns removed from view
-      html += "<td>" + (col > 19 ? cols[19] : String("")) + "</td>";  // PM2.5
-      html += "<td>" + (col > 20 ? cols[20] : String("")) + "</td>";  // PM10
-      html += "<td>" + (col > 21 ? cols[21] : String("")) + "</td>";  // CO2 ppm
-      html += "<td>" + (col > 22 ? cols[22] : String("")) + "</td>";  // Wind mph
+      // Columns now align to 20-column header
+      html += "<td>" + (col > 16 ? cols[16] : String("")) + "</td>";  // PM2.5
+      html += "<td>" + (col > 17 ? cols[17] : String("")) + "</td>";  // PM10
+      html += "<td>" + (col > 18 ? cols[18] : String("")) + "</td>";  // CO2 ppm
+      html += "<td>" + (col > 19 ? cols[19] : String("")) + "</td>";  // Wind mph
+      html += "<td>" + (col > 20 ? cols[20] : String("")) + "</td>";  // Wind Dir
     }
     html += "</tr>";
   }
@@ -2823,7 +3007,7 @@ void handleViewLogs() {
   html += "<script>function setMaxFromColumn(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMax').value=mm.max;}</script>";
   html += "<script>function autoRange(){var f=parseInt(document.getElementById('fField').value,10);var mm=computeColMinMax(f);if(!mm)return;document.getElementById('fMin').value=mm.min;document.getElementById('fMax').value=mm.max;/* ensure type is between for auto */document.getElementById('fType').value='between';applyFilter();}</script>";
   // Initialize from URL query parameters and auto-apply if present
-  html += "<script>(function(){try{var p=new URLSearchParams(location.search);if(!p)return;var fieldMap={temp:1,temperature:1,hum:2,humidity:2,dew:3,dew_f:3,hi:4,heat:4,heat_index:4,pressure:5,lux:8,light:8,illuminance:8,bat:9,batv:9,battery:9,voc:10,gas:10,mslp:11,slp:11,sea_level:11,rain:12,boot:13,boots:13,boot_count:13,wind:22,wind_mph:22};var fld=p.get('field');if(fld){var v=fieldMap[fld.toLowerCase()];if(!v&&/^[0-9]+$/.test(fld))v=parseInt(fld,10);if(v)document.getElementById('fField').value=String(v);}var type=p.get('type');if(type){var t=type.toLowerCase();if(t==='gte'||t==='lte'||t==='between'){document.getElementById('fType').value=t;}}if(p.has('min')){document.getElementById('fMin').value=p.get('min');}if(p.has('max')){document.getElementById('fMax').value=p.get('max');}if(p.has('field')||p.has('min')||p.has('max')||p.has('type')){applyFilter();}}catch(e){}})();</script>";
+  html += "<script>(function(){try{var p=new URLSearchParams(location.search);if(!p)return;var fieldMap={temp:1,temperature:1,hum:2,humidity:2,dew:3,dew_f:3,hi:4,heat:4,heat_index:4,pressure:5,lux:8,light:8,illuminance:8,bat:11,batv:11,battery:11,voc:12,gas:12,mslp:13,slp:13,sea_level:13,rain:14,boot:15,boots:15,boot_count:15,pm25:16,pm25_ugm3:16,pm10:17,pm10_ugm3:17,co2:18,co2_ppm:18,wind:19,wind_mph:19};var fld=p.get('field');if(fld){var v=fieldMap[fld.toLowerCase()];if(!v&&/^[0-9]+$/.test(fld))v=parseInt(fld,10);if(v)document.getElementById('fField').value=String(v);}var type=p.get('type');if(type){var t=type.toLowerCase();if(t==='gte'||t==='lte'||t==='between'){document.getElementById('fType').value=t;}}if(p.has('min')){document.getElementById('fMin').value=p.get('min');}if(p.has('max')){document.getElementById('fMax').value=p.get('max');}if(p.has('field')||p.has('min')||p.has('max')||p.has('type')){applyFilter();}}catch(e){}})();</script>";
   html += "</div></body></html>";
   server.sendHeader("Cache-Control", "no-store, must-revalidate");
   server.sendHeader("Pragma", "no-cache");
@@ -2872,8 +3056,8 @@ void handleReset() {
 
   File f = SD.open("/logs.csv", FILE_WRITE);
   if (f) {
-    // Extended schema without BSEC2: uv_mv, uv_index, SDS011 PM, SCD41 CO2, and Wind (mph) at the end
-    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph");
+    // Extended schema without BSEC2: uv_mv, uv_index, SDS011 PM, SCD41 CO2, Wind (mph), and Wind Dir at the end
+    f.println("timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir");
     f.close();
   } else {
     Serial.println("❌ Failed to recreate logs.csv");
@@ -2900,42 +3084,8 @@ void handleSleep() {
   delay(1000);
   blinkStatus(3, 200);
 
-  // Ensure optional sensors are stopped before deep sleep
-#if ENABLE_SDS011
-  if (sdsPresent && sdsAwake) {
-#if defined(HAVE_SDS_LIB)
-    sds.sleep();
-#endif
-    sdsAwake = false;
-  }
-#endif
-#if ENABLE_SCD41 && defined(HAVE_SCD4X_LIB)
-  if (scd41Ok) {
-    scd4x.stopPeriodicMeasurement();
-  }
-#endif
-
-  if (rtcOkFlag) {
-    rtc.clearAlarm(1);
-    DateTime t = rtc.now();
-    DateTime alarmT = t + TimeSpan(0, 0, DEEP_SLEEP_SECONDS / 60, 0);
-    rtc.setAlarm1(alarmT, DS3231_A1_Minute);
-    rtc.writeSqwPinMode(DS3231_OFF);
-    rtc.clearAlarm(1);
-    lastAlarmUnix = alarmT.unixtime();
-    esp_sleep_enable_ext0_wakeup(RTC_INT_PIN, LOW);
-    Serial.printf("Manual sleep → wake at %02d:%02d\n", alarmT.hour(), alarmT.minute());
-  } else {
-    Serial.println("Manual sleep without RTC → timer wake only");
-    lastAlarmUnix = 0;
-  }
-
-  // Always enable timer wake as safety
-  esp_sleep_enable_timer_wakeup((DEEP_SLEEP_SECONDS + 60) * 1000000ULL);
-
-  // Ensure LED is off before entering deep sleep from manual handler as well
-  digitalWrite(STATUS_LED_PIN, LOW);
-  esp_deep_sleep_start();
+  // Reuse central sleep routine
+  prepareDeepSleep(DEEP_SLEEP_SECONDS);
 }
 
 
@@ -3041,6 +3191,8 @@ void loop() {
           uint16_t pm10 = (uint16_t)sdsBuf[4] | ((uint16_t)sdsBuf[5] << 8);
           sdsPm25 = pm25 / 10.0f;
           sdsPm10 = pm10 / 10.0f;
+          // Mark presence once a valid packet is parsed
+          sdsPresent = true;
           // Accumulate raw values to average later during wake window
           if (millis() >= sdsWarmupUntilMs) {
             sdsAccumPm25RawSum += pm25;

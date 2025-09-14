@@ -3,15 +3,16 @@
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
 
 <p align="center">
-  <img alt="ESP32 Weather Station" src="docs/hero.png" width="48%">
-  <img alt="ESP32 Weather Station (alt)" src="docs/hero1.jpg" width="48%">
+  <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="32%">
+  <img alt="Wind Speed Gauge Anemometer" src="docs/WindspeedgaugeAnemometer.jpg" width="32%">
+  <img alt="Rain Gauge Tipping Bucket" src="docs/RainGaugeTippingBucketRainMeter.jpg" width="32%">
 </p>
 
 ---
 
 ## Features
 
-- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind)
+- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind), Wind vane (PCF8574)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
 - **Time:** DS3231 RTC (preferred) with NTP fallback
 - **Connectivity:** Wi‑Fi Station with AP fallback, mDNS (configurable hostname)
@@ -27,7 +28,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 ## Hardware
 
 - **MCU:** ESP32‑S3 (Lonely Binary Dev Board, 16MB Flash / 8MB PSRAM); classic ESP32 also works
-- **Sensors:** BME680 (I²C), VEML7700 (I²C), optional UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind)
+- **Sensors:** BME680 (I²C), VEML7700 (I²C), optional UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind), Wind vane (PCF8574 I²C)
 - **RTC:** DS3231 (INT/SQW → GPIO2)
 - **Storage:** microSD (SPI)
 - **LED:** status LED on GPIO37 (S3 mapping)
@@ -45,6 +46,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 | Status LED | 37 |
 | Rain gauge (tipping) | 18 |
 | Wind (Hall) | 7 |
+| Wind vane (PCF8574) | I²C (0x20-0x27) |
 | UV analog (GUVA‑S12SD) | 6 |
 
 ### Board specifics
@@ -163,6 +165,9 @@ After boot and Wi‑Fi join, open:
   "co2_ppm": 760,
   "wind_mph": 3.4,
   "wind_avg_mph_1h": 2.7,
+  "wind_dir": "NE",
+  "wind_dir_idx": 1,
+  "wind_vane_ok": true,
   "dew_f": 50.3,
   "hi_f": 73.9,
   "wbt_f": 54.4,
@@ -202,12 +207,12 @@ File: `/logs.csv`
 
 Header (extended v18+):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
 ```
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4,NE
 ```
 
 Note: After the initial startup log, an extra boot event row is appended containing only the timestamp and `boot_count` (other numeric columns blank). Clearing logs via `/reset` writes the extended header above.
@@ -285,4 +290,14 @@ Wi‑Fi networks are managed via:
 - Main enclosure based on [Thingiverse model](https://www.thingiverse.com/thing:4094861)
 - Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter)
 - Wind anemometer: [Wind speed gauge anemometer v3.0](https://www.printables.com/model/625326-wind-speed-gauge-anemometer-v30) by shermluge on Printables
+- SDS011 dust sensor enclosure: [SDS011 Dust sensor enclosure](https://www.thingiverse.com/thing:2516382) by sumpfing on Thingiverse
+- Wind vane: Currently in development and design phase
+
+<p align="center">
+  <img alt="Wind vane design in Fusion 360" src="docs/WindVaneFuison.png" width="48%">
+  <img alt="Wind vane cross section selection" src="docs/WindVaneCrossSelection.png" width="48%">
+</p>
+
+
+
 Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), and the Arduino community.
