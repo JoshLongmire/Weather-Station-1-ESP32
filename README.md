@@ -288,11 +288,11 @@ Wi‑Fi networks are managed via:
 - [Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909)
 
 ## Credits
-- Main enclosure based on [Thingiverse model](https://www.thingiverse.com/thing:4094861)
-- Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter)
+- Main enclosure based on [Frog Box v2.0 (Rugged Waterproof Box Remix)](https://www.thingiverse.com/thing:4094861) by Nibb31 on Thingiverse
+- Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter) By jattie on Printables 
 - Wind anemometer: [Wind speed gauge anemometer v3.0](https://www.printables.com/model/625326-wind-speed-gauge-anemometer-v30) by shermluge on Printables
 - SDS011 dust sensor enclosure: [SDS011 Dust sensor enclosure](https://www.thingiverse.com/thing:2516382) by sumpfing on Thingiverse
-- Wind vane: Currently in development and design phase
+- Wind vane: Currently in development and design phase I need help with balancing the model, 
 
 <p align="center">
   <img alt="Wind vane design in Fusion 360" src="docs/WindVaneFuison.png" width="48%">
