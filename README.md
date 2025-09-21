@@ -83,6 +83,7 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
   - RTClib
   - ArduinoJson
   - ElegantOTA
+  - Sensirion SCD4x (SCD40/SCD41) CO₂ Sensor
   - Core: `WiFi`, `WebServer`, `ESPmDNS`, `SD`, `SPI`, `Preferences`
 
 ### Build & flash
@@ -177,7 +178,8 @@ After boot and Wi‑Fi join, open:
   "pressure_trend": "Steady",
   "forecast": "Fair",
   "general_forecast": "Improving / Fair",
-  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph)",
+  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph) | Rain 3/6/12h: →/→/→",
+  "storm_risk": false,
   "aqi_category": "Good",
   "rain_mmph": 0.28,
   "rain_inph": 0.01,
@@ -303,3 +305,31 @@ Wi‑Fi networks are managed via:
 
 
 Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), Nibb31, jattie, shermluge and the Arduino community.
+
+---
+
+## Licenses and third‑party notices
+
+- This project integrates third‑party libraries; their original LICENSE files are preserved in their respective folders under your Arduino libraries directory.
+- A consolidated list of third‑party components and licenses is provided in `THIRD_PARTY_LICENSES.md`.
+
+### Third‑party libraries used
+
+- Sensirion SCD4x (SCD40/SCD41) Arduino driver — License: BSD‑3‑Clause (see library LICENSE)
+- Adafruit BME680 — License: BSD
+- Adafruit Unified Sensor — License: BSD
+- Adafruit VEML7700 — License: BSD
+- RTClib — License: MIT
+- ArduinoJson — License: MIT
+- ElegantOTA — License: MIT
+- ESP32 core (Arduino‑ESP32) — License: Apache‑2.0
+
+Note:
+- License headers present in any source files from these libraries are retained unmodified.
+- If you redistribute binaries or source, include the corresponding LICENSE files and this notice.
+
+### Project license
+
+This repository’s code is licensed under the PolyForm Noncommercial 1.0.0 license. See `LICENSE`.
+
+Documentation and images are licensed under CC BY‑4.0. See `LICENSE-CC-BY-4.0.md`.

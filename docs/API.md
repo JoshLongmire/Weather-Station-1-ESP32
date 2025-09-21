@@ -51,7 +51,7 @@ Notes:
 - `voc_kohm` is derived from BME680 gas resistance in kΩ.
 - `rain` column is written in mm/h or in/h depending on the current unit setting.
 - Legacy logs (pre‑v18) used a 14‑column header; new columns were added later. When you Clear Logs via `/reset`, the extended header above is written.
- - Additional `/live`-only fields like `forecast_detail`, `aqi_category`, `wind_avg_mph_1h`, and `sds_auto_sleep_ms_left` support richer dashboards but are not in the CSV.
+ - Additional `/live`-only fields like `forecast_detail`, `aqi_category`, `wind_avg_mph_1h`, `storm_risk`, and `sds_auto_sleep_ms_left` support richer dashboards but are not in the CSV.
 
 ## HTTP API
 Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` (configurable in `/config`).
@@ -122,21 +122,23 @@ Example:
   "pressure_trend": "Steady",
   "forecast": "Fair",
   "general_forecast": "Improving / Fair",
-  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph)",
+  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph) | Rain 3/6/12h: →/→/→",
   "aqi_category": "Good",
+  "storm_risk": false,
   "last_sd_log": "2025-01-01 15:40:00"
 }
 ```
 
-- Units:
+- Units and notes:
   - Temperature fields include both °F and °C; `temp_unit` indicates UI preference.
   - Pressure includes station pressure (`pressure`, hPa) and MSLP (`mslp_hPa`, `mslp_inHg`).
   - Battery is pack voltage (single-cell Li‑ion) in volts.
-  - Rain rate is provided in mm/h and in/h; `rain_unit` indicates current CSV/UI unit.
-  - Wind speed is reported in multiple units; `wind_mph` is commonly used in CSV. `wind_avg_mph_1h` is a rolling 1‑hour average sampled once per minute.
+  - Rain rate is provided in mm/h and in/h; `rain_unit` indicates current CSV/UI unit. Forecast detail also shows a compact rain trend indicator for 3/6/12 hours using arrows (↑ rising, → steady, ↓ falling).
+  - Wind speed is reported in multiple units; `wind_mph` is commonly used in CSV. `wind_avg_mph_1h` is a rolling 1‑hour average sampled once per minute and is used in `forecast_detail` when available.
   - Wind direction uses an 8‑point compass: `N, NE, E, SE, S, SW, W, NW`. Fields: `wind_dir` (text), `wind_dir_idx` (0..7), `wind_vane_ok` (bool).
   - UV fields include raw sensor millivolts (`uv_mv`) and an approximate index (`uv_index`).
   - `aqi_category` is derived from PM2.5 for a simple dashboard label.
+  - `storm_risk` is a boolean derived from pressure, trend, wind, UV, and humidity; true indicates non‑low storm risk.
   - When SDS011 is duty-cycled, `sds_auto_sleep_ms_left` shows milliseconds until auto-sleep during the 2‑minute window.
 
 cURL example:
