@@ -9,20 +9,16 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
   <img alt="Weather Station on Tripod/Back side." src="docs/WeatherStationTtriPodMainBackSide.jpg" width="32%">
   <img alt="VEML7700/UV Sensors" src="docs/VEML7700_UVSensors1.jpg" width="32%">
 </p>
-
-
-<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
-  Photos: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
-</p>
-
 <p align="center">
   <img alt="Wind Speed Gauge Anemometer" src="docs/WindspeedgaugeAnemometer.jpg" width="32%">
   <img alt="Wind Vane Side" src="docs/WIndVaneSide.jpg" width="32%">
 </p>
 
+
 <p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
   Photos: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
+
 
 ---
 
