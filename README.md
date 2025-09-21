@@ -5,8 +5,23 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 <p align="center">
   <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="60%">
   <br><br>
+  <img alt="SDS011 Dust Sensor" src="docs/SDS011DustSensorMain.jpg" width="32%">
+  <img alt="Weather Station on Tripod/Back side." src="docs/WeatherStationTtriPodMainBackSide.jpg" width="32%">
+  <img alt="VEML7700/UV Sensors" src="docs/VEML7700_UVSensors1.jpg" width="32%">
+</p>
+
+
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Photos: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
+</p>
+
+<p align="center">
   <img alt="Wind Speed Gauge Anemometer" src="docs/WindspeedgaugeAnemometer.jpg" width="32%">
-  <img alt="Rain Gauge Tipping Bucket" src="docs/RainGaugeTippingBucketRainMeter.jpg" width="32%">
+  <img alt="Wind Vane Side" src="docs/WIndVaneSide.jpg" width="32%">
+</p>
+
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Photos: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
 
 ---
@@ -104,6 +119,10 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
   <img alt="Arduino IDE board settings" src="docs/IDE_Set.png" width="80%">
 </p>
 
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Screenshot: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
+</p>
+
 ---
 
 ## Web interface & API
@@ -116,6 +135,10 @@ After boot and Wi‑Fi join, open:
   <img alt="Dashboard main page 1" src="docs/Mainpage1.png" width="32%">
   <img alt="Dashboard main page 2" src="docs/Mainpage2.png" width="32%">
   <img alt="Dashboard main page 3" src="docs/Mainpage3.png" width="32%">
+</p>
+
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Screenshots: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
 
 ### Endpoints
