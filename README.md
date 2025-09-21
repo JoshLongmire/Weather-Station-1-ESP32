@@ -3,9 +3,8 @@
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
 
 <p align="center">
-  <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="60%">
+  <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="32%">
   <img alt="Wind Vane Side" src="docs/WIndVaneSide.jpg" width="32%">
-  <br><br>
   <img alt="SDS011 Dust Sensor" src="docs/SDS011DustSensorMain.jpg" width="32%">
   <img alt="Weather Station on Tripod/Back side." src="docs/WeatherStationTtriPodMainBackSide.jpg" width="32%">
   <img alt="VEML7700/UV Sensors" src="docs/VEML7700_UVSensors1.jpg" width="32%">
