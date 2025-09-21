@@ -4,6 +4,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 <p align="center">
   <img alt="Weather Station on Tripod" src="docs/WeatherStationTripodMain.jpg" width="60%">
+  <img alt="Wind Vane Side" src="docs/WIndVaneSide.jpg" width="32%">
   <br><br>
   <img alt="SDS011 Dust Sensor" src="docs/SDS011DustSensorMain.jpg" width="32%">
   <img alt="Weather Station on Tripod/Back side." src="docs/WeatherStationTtriPodMainBackSide.jpg" width="32%">
@@ -11,7 +12,6 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 </p>
 <p align="center">
   <img alt="Wind Speed Gauge Anemometer" src="docs/WindspeedgaugeAnemometer.jpg" width="32%">
-  <img alt="Wind Vane Side" src="docs/WIndVaneSide.jpg" width="32%">
 </p>
 
 
