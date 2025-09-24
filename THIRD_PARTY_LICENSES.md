@@ -38,6 +38,5 @@ This project uses the following third‑party libraries. Their original LICENSE 
   - Upstream: Espressif Systems
   - License: Apache‑2.0
 
-If you add or remove libraries, please update this file and the README Licenses section accordingly.
 
 
