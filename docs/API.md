@@ -4,7 +4,7 @@ This document describes the HTTP endpoints, persisted configuration, CSV schema,
 
 ## Overview
 - Device: ESP32-based weather station (tested on ESP32‑S3 — Lonely Binary ESP32‑S3 Dev Board, 16MB Flash / 8MB PSRAM)
-- Sensors: BME680 (temperature, humidity, pressure, gas resistance), VEML7700 (ambient light), optional UV analog (GUVA‑S12SD), optional SDS011 (PM2.5/PM10), optional SCD41 (CO₂), optional Hall anemometer (wind)
+- Sensors: BME680 (temperature, humidity, pressure, gas resistance), VEML7700 (ambient light), optional UV analog (GUVA‑S12SD), optional SDS011 (PM2.5/PM10), optional Hall anemometer (wind)
 - Storage: SD card (`/logs.csv`)
 - Time: DS3231 RTC (preferred) and NTP syncing
 - Connectivity: Wi‑Fi STA with AP fallback, mDNS
@@ -33,14 +33,14 @@ Timing and mode constants:
 ## CSV Log Schema
 File: `/logs.csv`
 
-Header created by Reset (extended v18+):
+Header created by Reset (extended v18+, CO₂ removed). As of v18.1, wind gust and rain totals are appended at the end:
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
 ```
 
-Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
+Example row (units: temp °F, pressure hPa, MSLP inHg; rain columns use the selected unit at write time):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4,NE
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34
 ```
 
 Notes:
@@ -50,6 +50,8 @@ Notes:
 - `forecast` is a simplified label derived from MSLP, trend, humidity, temp, rain rate, and lux.
 - `voc_kohm` is derived from BME680 gas resistance in kΩ.
 - `rain` column is written in mm/h or in/h depending on the current unit setting.
+- `wind_gust_mph` is computed as the highest 5‑second sample rate observed in the last 10 minutes.
+- `rain_1h`, `rain_today`, and `rain_event` are totals in the same unit as `rain` (mm or inches) when the row was written.
 - Legacy logs (pre‑v18) used a 14‑column header; new columns were added later. When you Clear Logs via `/reset`, the extended header above is written.
  - Additional `/live`-only fields like `forecast_detail`, `aqi_category`, `wind_avg_mph_1h`, `storm_risk`, and `sds_auto_sleep_ms_left` support richer dashboards but are not in the CSV.
 
@@ -83,12 +85,12 @@ Example:
   "sds_awake": true,
   "sds_warm": true,
   "sds_auto_sleep_ms_left": 85000,
-  "co2_ppm": 760,
-  "scd41_ok": true,
+  
   "wind_hz": 2.2,
   "wind_mps": 1.5,
   "wind_kmh": 5.4,
   "wind_mph": 3.4,
+  "wind_gust_mph": 7.8,
   "wind_ok": true,
   "wind_avg_mph_1h": 2.7,
   "wind_dir": "NE",
@@ -101,6 +103,13 @@ Example:
   "rain_mmph": 0.28,
   "rain_inph": 0.01,
   "rain_unit": "mm/h",
+  "rain_1h_mm": 3.0,
+  "rain_1h_in": 0.12,
+  "rain_today_mm": 8.6,
+  "rain_today_in": 0.34,
+  "rain_event_mm": 8.6,
+  "rain_event_in": 0.34,
+  "rain_in_per_tip": 0.011,
   "boot_started": "15:21:43",
   "sd_ok": true,
   "rtc_ok": true,
@@ -155,7 +164,7 @@ curl -LOJ http://WeatherStation1.local/download
 
 ### GET `/view-logs`
 - Renders the last N rows of the CSV in a styled HTML table with client-side filters.
-- Client-side controls include field selector (Temp, Hum, Dew, Heat Index, Pressure, Lux, Battery, VOC, MSLP, Rain, Boot Count), comparison type, and Min/Max with Auto Range.
+- Client-side controls include field selector (Temp, Hum, Dew, Heat Index, Pressure, Lux, Battery, VOC, MSLP, Rain, Boot Count, PM2.5/PM10, Wind, Wind Gust, Rain 1h, Rain Today, Rain Event), comparison type, and Min/Max with Auto Range.
 - Query helper parameters (optional): `field`, `type`, `min`, `max`.
   - Example: `?field=temp&type=between&min=60&max=80`.
 
@@ -173,6 +182,7 @@ curl -LOJ http://WeatherStation1.local/download
     - `sleep_minutes` — deep sleep duration between wakes; default 10
     - `trend_threshold_hpa` — pressure Δ threshold; default 0.6
   - `rain_unit` (`mm` or `in`) — unit used for rain rate in CSV/UI
+  - `rain_tip_in` (float) — inches per bucket tip for accumulation; default 0.011
   - `mdns_host` (string) — mDNS hostname label (no `.local`)
   - `sds_mode` (`off|pre1|pre2|pre5|cont`) — SDS011 duty preset
   - `debug_verbose` (`0|1`) — verbose serial logging
@@ -325,9 +335,11 @@ All functions are defined within the main `.ino`. Key functions and their roles:
 
 ### Rain Gauge ISR
 - `void IRAM_ATTR rainIsr()` — Debounced tipping bucket counter; stores timestamps in a ring buffer for rate calculations used by `/live`.
+  - Accumulation totals: rolling 1h, daily (midnight reset), and event total (resets after ≥6h dry gap). Tip size is configurable via `rain_tip_in`.
 
 ### Wind Anemometer ISR (optional)
 - `void IRAM_ATTR windIsr()` — Hall sensor pulse capture using a 128‑entry ring buffer; UI and `/live` expose wind in Hz, m/s, km/h, mph.
+  - Wind gust metric exposed as `wind_gust_mph` using the classic NOAA method: highest 5‑second sample in the last 10 minutes.
 
 ## Usage Notes
 - The device records a boot event row immediately after the first `performLogging()` in `setup()` (an extra line with only timestamp and boot count at the end).

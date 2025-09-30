@@ -21,7 +21,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ## Features
 
-- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind), Wind vane (PCF8574)
+- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
 - **Time:** DS3231 RTC (preferred) with NTP fallback
 - **Connectivity:** Wi‑Fi Station with AP fallback, mDNS (configurable hostname)
@@ -37,7 +37,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 ## Hardware
 
 - **MCU:** ESP32‑S3 (Lonely Binary Dev Board, 16MB Flash / 8MB PSRAM); classic ESP32 also works
-- **Sensors:** BME680 (I²C), VEML7700 (I²C), optional UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), SCD41 (CO₂), Hall anemometer (wind), Wind vane (PCF8574 I²C)
+- **Sensors:** BME680 (I²C), VEML7700 (I²C), optional UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574 I²C)
 - **RTC:** DS3231 (INT/SQW → GPIO2)
 - **Storage:** microSD (SPI)
 - **LED:** status LED on GPIO37 (S3 mapping)
@@ -91,7 +91,7 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
   - RTClib
   - ArduinoJson
   - ElegantOTA
-  - Sensirion SCD4x (SCD40/SCD41) CO₂ Sensor
+  
   - Core: `WiFi`, `WebServer`, `ESPmDNS`, `SD`, `SPI`, `Preferences`
 
 ### Build & flash
@@ -180,8 +180,9 @@ After boot and Wi‑Fi join, open:
   "sds_awake": true,
   "sds_warm": true,
   "sds_auto_sleep_ms_left": 85000,
-  "co2_ppm": 760,
+  
   "wind_mph": 3.4,
+  "wind_gust_mph": 7.8,
   "wind_avg_mph_1h": 2.7,
   "wind_dir": "NE",
   "wind_dir_idx": 1,
@@ -200,6 +201,13 @@ After boot and Wi‑Fi join, open:
   "rain_mmph": 0.28,
   "rain_inph": 0.01,
   "rain_unit": "mm/h",
+  "rain_1h_mm": 3.0,
+  "rain_1h_in": 0.12,
+  "rain_today_mm": 8.6,
+  "rain_today_in": 0.34,
+  "rain_event_mm": 8.6,
+  "rain_event_in": 0.34,
+  "rain_in_per_tip": 0.011,
   "boot_count": 123,
   "uptime": 1234,
   "rssi": -56,
@@ -224,9 +232,9 @@ After boot and Wi‑Fi join, open:
 
 File: `/logs.csv`
 
-Header (extended v18+):
+Header (extended v18+, CO₂ removed). As of v18.1, the CSV includes wind gust and rain totals at the end:
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,co2_ppm,wind_mph,wind_dir
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
 ```
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
@@ -255,6 +263,7 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
 - `bat_cal` — ADC voltage calibration multiplier  
 - `time_12h` — 12h or 24h display toggle  
 - `rain_unit` — `mm/h` or `in/h` for log/UI rain values  
+- `rain_tip_in` — inches per bucket tip (default 0.011); used for accumulation totals  
  - `lux_enter_day` — Daylight entry (lux). Default: 1600  
  - `lux_exit_day` — Night entry (lux). Default: 1400  
  - `log_interval_min` — Log interval (minutes) while awake. Default: 10  
@@ -293,7 +302,7 @@ Wi‑Fi networks are managed via:
 
 ## Roadmap (ideas)
 
-- Optional AQ modules: MiCS‑5524, SCD41  
+- Optional AQ modules: MiCS‑5524  
 - Power metering: INA3221 (tried to wire,)
 - RGB LED Status debugging
 
@@ -301,7 +310,7 @@ Wi‑Fi networks are managed via:
 
 ## Implemented Hardware
 - [Added Wind subsystem: Accelerometer, the Wind Vane ](https://a.co/d/0iTu9BR)is connected to [PCF8574T PCF8574 IO Expansion Board Module](https://a.co/d/fuVj1YV)
-- [Added a SCD41](https://a.co/d/65sVqnm)
+  
 - [UV sensing: S12SD UV Index](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Solar/charging: 900 mA MPPT controller (Efficiency approved)](https://www.amazon.com/dp/B07MML4YJV?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909)
@@ -331,7 +340,7 @@ Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (El
 
 ### Third‑party libraries used
 
-- Sensirion SCD4x (SCD40/SCD41) Arduino driver — License: BSD‑3‑Clause (see library LICENSE)
+  
 - Adafruit BME680 — License: BSD
 - Adafruit Unified Sensor — License: BSD
 - Adafruit VEML7700 — License: BSD
