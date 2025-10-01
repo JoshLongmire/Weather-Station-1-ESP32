@@ -21,14 +21,21 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ## Features
 
-- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574)
+- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574), Leaf wetness (LM393)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
-- **Time:** DS3231 RTC (preferred) with NTP fallback
+- **Time:** DS3231 RTC (preferred) with NTP fallback and daily drift check
 - **Connectivity:** Wi‑Fi Station with AP fallback, mDNS (configurable hostname)
-- **Web UI:** Live dashboard, charts, log viewer & download
+- **Web UI:** Live dashboard with dark theme, real-time charts, log viewer & download
 - **REST API:** `/live`, `/download`, `/view-logs`, `/config`, `/add`, `/del`, etc.
 - **Power modes:** DAY (awake, periodic logs) / NIGHT (short serve window → deep sleep)
 - **OTA:** ElegantOTA at `/update` (basic auth)
+- **Advanced Features:** 
+  - Rain accumulation tracking (1h, daily, event totals with ≥6h dry gap reset)
+  - Wind speed & gust (5-second max over 10 minutes) with 1-hour rolling average
+  - Wind direction (8-point compass via PCF8574 I²C expander)
+  - Leaf wetness monitoring with 24-hour wet-hours accumulation
+  - Dust sensor duty cycling (SDS011) with configurable presets
+  - Rich forecast with detailed metrics (air quality, UV risk, wind, rain trends, storm risk)
 
 > Full endpoint and data schema: see **[docs/API.md](docs/API.md)**.
 
@@ -37,11 +44,18 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 ## Hardware
 
 - **MCU:** ESP32‑S3 (Lonely Binary Dev Board, 16MB Flash / 8MB PSRAM); classic ESP32 also works
-- **Sensors:** BME680 (I²C), VEML7700 (I²C), optional UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574 I²C)
-- **RTC:** DS3231 (INT/SQW → GPIO2)
+- **Sensors:** 
+  - BME680 (I²C) — temperature, humidity, pressure, VOC gas
+  - VEML7700 (I²C) — ambient light (0-120k lux range)
+  - Optional: GUVA‑S12SD (analog) — UV index
+  - Optional: SDS011 (UART) — PM2.5/PM10 particulate matter
+  - Optional: Hall anemometer (GPIO interrupt) — wind speed
+  - Optional: PCF8574 (I²C) — 8-point wind vane direction
+  - Optional: LM393 leaf wetness (analog) — moisture detection
+- **RTC:** DS3231 (INT/SQW → GPIO2) with daily NTP sync and drift correction
 - **Storage:** microSD (SPI)
 - **LED:** status LED on GPIO37 (S3 mapping)
-- **Rain gauge:** reed switch to GND (GPIO18 in S3 mapping)
+- **Rain gauge:** reed switch tipping bucket to GND (GPIO18 in S3 mapping)
 - **Battery sense:** ADC pin with 100k/100k divider (GPIO4 in S3 mapping)
 
 ### Pinout (defaults)
@@ -57,6 +71,8 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 | Wind (Hall) | 7 |
 | Wind vane (PCF8574) | I²C (0x20-0x27) |
 | UV analog (GUVA‑S12SD) | 6 |
+| Leaf wetness analog | 3 (S3), 34 (classic ESP32) |
+| SDS011 UART | RX=16, TX=17 |
 
 ### Board specifics
 
@@ -68,8 +84,9 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 
 ```text
 .
-├─ WaetherStation08_24_25_v18/   # Main Arduino sketch
-├─ docs/API.md                  # API reference & schema
+├─ WaetherStation08_24_25_v18.ino/   # Main Arduino sketch
+├─ docs/API.md                       # API reference & schema
+├─ .cursor/rules/                    # Cursor AI coding rules
 └─ README.md
 ```
 
@@ -83,16 +100,17 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
 
 ### Prerequisites
 
-- **Arduino IDE** (or PlatformIO)
+- **Arduino IDE 2.3.6+** (or PlatformIO)
 - **ESP32 board package**
 - Libraries:
   - Adafruit BME680 + Adafruit Unified Sensor
   - Adafruit VEML7700
-  - RTClib
+  - RTClib (DS3231)
   - ArduinoJson
   - ElegantOTA
+  - Optional: SdsDustSensor (for SDS011 support)
   
-  - Core: `WiFi`, `WebServer`, `ESPmDNS`, `SD`, `SPI`, `Preferences`
+  - Core: `WiFi`, `WebServer`, `ESPmDNS`, `SD`, `SPI`, `Preferences`, `Wire`, `time.h`, `vector`
 
 ### Build & flash
 
@@ -104,7 +122,7 @@ Default AP: SSID `WeatherStation1`, password `12345678`.
    - USB CDC On Boot: `Enabled` (optional)
    - CPU Freq: `240 MHz`
 3. Select your COM port.
-4. (Optional) Update default OTA/AP credentials in the sketch.
+4. (Optional) Update default OTA/AP credentials in the sketch before deployment.
 5. Upload the firmware.
 6. Open **Serial Monitor** @ **115200** to see IP and **mDNS** name.
 
@@ -187,6 +205,11 @@ After boot and Wi‑Fi join, open:
   "wind_dir": "NE",
   "wind_dir_idx": 1,
   "wind_vane_ok": true,
+  
+  "leaf_pct": 45.2,
+  "leaf_wet": false,
+  "leaf_wet_hours_today": 2.3,
+  
   "dew_f": 50.3,
   "hi_f": 73.9,
   "wbt_f": 54.4,
@@ -195,7 +218,7 @@ After boot and Wi‑Fi join, open:
   "pressure_trend": "Steady",
   "forecast": "Fair",
   "general_forecast": "Improving / Fair",
-  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph) | Rain 3/6/12h: →/→/→",
+  "forecast_detail": "Air: Good | UV: High | Wind: Light (3 mph NE, G: 8) | Humid | Rain 3/6/12h: →/→/→",
   "storm_risk": false,
   "aqi_category": "Good",
   "rain_mmph": 0.28,
@@ -232,25 +255,26 @@ After boot and Wi‑Fi join, open:
 
 File: `/logs.csv`
 
-Header (extended v18+, CO₂ removed). As of v18.1, the CSV includes wind gust and rain totals at the end:
+Header (extended v18+, includes wind, gust, rain totals, and leaf wetness):
 ```
 timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
 ```
 
 Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,760,3.4,NE
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34
 ```
 
-Note: After the initial startup log, an extra boot event row is appended containing only the timestamp and `boot_count` (other numeric columns blank). Clearing logs via `/reset` writes the extended header above.
+Note: Clearing logs via `/reset` POST writes the extended header above. Legacy logs (pre‑v18) are backward-compatible.
 
 ---
 
 ## Power behavior
 
 - **DAY:** stays awake; logs on cadence (`LOG_INTERVAL_MS`, default 10 min)
-- **NIGHT:** short “serve” window after wake, then deep sleep (`DEEP_SLEEP_SECONDS`, default 10 min)
-- Light thresholds (enter/exit DAY) use VEML7700 with hysteresis & dwell.
+- **NIGHT:** short "serve" window after wake (default 2 minutes), then deep sleep (`DEEP_SLEEP_SECONDS`, default 10 min)
+- Light thresholds (enter/exit DAY) use VEML7700 with hysteresis & 30s dwell.
+- Initial boot: 30-minute config window, then 2-minute decision run before entering normal DAY/NIGHT cycling.
 
 ---
 
@@ -264,14 +288,16 @@ Open **`/config`** to adjust persistent settings (stored in Preferences):
 - `time_12h` — 12h or 24h display toggle  
 - `rain_unit` — `mm/h` or `in/h` for log/UI rain values  
 - `rain_tip_in` — inches per bucket tip (default 0.011); used for accumulation totals  
- - `lux_enter_day` — Daylight entry (lux). Default: 1600  
- - `lux_exit_day` — Night entry (lux). Default: 1400  
- - `log_interval_min` — Log interval (minutes) while awake. Default: 10  
- - `sleep_minutes` — Deep sleep duration (minutes) between wakes. Default: 10  
- - `trend_threshold_hpa` — Pressure trend threshold (hPa). Default: 0.6  
- - `mdns_host` — mDNS hostname label (no `.local`)  
- - `sds_mode` — SDS011 duty: `off`, `pre1`, `pre2`, `pre5`, `cont`  
- - `debug_verbose` — verbose serial logging toggle  
+- `rain_debounce_ms` — ISR debounce window (50–500 ms typical)  
+- `lux_enter_day` — Daylight entry (lux). Default: 1600  
+- `lux_exit_day` — Night entry (lux). Default: 1400  
+- `log_interval_min` — Log interval (minutes) while awake. Default: 10  
+- `sleep_minutes` — Deep sleep duration (minutes) between wakes. Default: 10  
+- `trend_threshold_hpa` — Pressure trend threshold (hPa). Default: 0.6  
+- `mdns_host` — mDNS hostname label (no `.local`)  
+- `sds_mode` — SDS011 duty: `off`, `pre1` (1 min before log), `pre2` (2 min), `pre5` (5 min), `cont` (continuous while awake)  
+- `leaf_debug` — Show raw LEAF_ADC_DRY/WET values on dashboard for field calibration  
+- `debug_verbose` — verbose serial logging toggle  
 
 <p align="center">
   <img alt="Config settings page" src="docs/Configsettingspage.png" width="80%">
@@ -288,46 +314,54 @@ Wi‑Fi networks are managed via:
 
 - OTA endpoint `/update` uses **basic auth** — change the defaults before deploying.  
 - `/add` and `/config` are plain HTTP; run on a trusted LAN.
+- Default AP credentials: SSID `WeatherStation1`, password `12345678` — change before deployment.
+- Default OTA credentials: username `weatherstation1`, password `12345678` — change in `setupOTA()`.
 
 ---
 
 ## Troubleshooting
 
-- If **mDNS** fails, use the serial‑printed IP or your router’s DHCP leases.
-- If **SD** fails, verify wiring, CS pin, and card format.
-- If **BME680** or **VEML7700** aren’t detected, check I²C wiring/addresses.
-- If **RTC** is absent, the device falls back to timer‑only wakes.
+- If **mDNS** fails, use the serial‑printed IP or your router's DHCP leases.
+- If **SD** fails, verify wiring, CS pin, and card format (FAT32 recommended).
+- If **BME680** or **VEML7700** aren't detected, check I²C wiring/addresses (0x76/0x77 for BME680).
+- If **RTC** is absent, the device falls back to timer‑only wakes (`rtc_ok` will be false).
+- If **SDS011** shows no data, check UART wiring (RX=16, TX=17) and verify sensor power.
+- If **wind vane** shows N/A, verify PCF8574 I²C address (0x20-0x27) and wiring.
+- If **leaf wetness** readings seem inverted, adjust `LEAF_ADC_DRY` and `LEAF_ADC_WET` calibration constants in sketch.
 
 ---
 
 ## Roadmap (ideas)
 
-- Optional AQ modules: MiCS‑5524  
-- Power metering: INA3221 (tried to wire,)
+- Optional AQ modules: MiCS‑5524, SCD41 (CO₂)  
+- Power metering: INA3221 (solar/battery monitoring)
 - RGB LED Status debugging
+- Web-based calibration tools for sensors
+- MQTT support for home automation integration
 
 ---
 
 ## Implemented Hardware
-- [Added Wind subsystem: Accelerometer, the Wind Vane ](https://a.co/d/0iTu9BR)is connected to [PCF8574T PCF8574 IO Expansion Board Module](https://a.co/d/fuVj1YV)
-  
+
+- [Wind subsystem: Accelerometer, Wind Vane](https://a.co/d/0iTu9BR) connected to [PCF8574T PCF8574 IO Expansion Board Module](https://a.co/d/fuVj1YV)
 - [UV sensing: S12SD UV Index](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Solar/charging: 900 mA MPPT controller (Efficiency approved)](https://www.amazon.com/dp/B07MML4YJV?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - [Lonely Binary ESP32-S3 Development Board-16MB Flash, 8MB PSRAM, IPEX Antenna (Gold Edition)](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909)
+- [SDS011 Air Quality Sensor (PM2.5/PM10)](https://www.amazon.com/dp/B07FSDMRR5)
+- [LM393 Leaf Wetness/Raindrop Sensor](https://www.amazon.com/dp/B07FSDMRR5)
 
-## Credits
+## 3D Printed Components
+
 - Main enclosure based on [Frog Box v2.0 (Rugged Waterproof Box Remix)](https://www.thingiverse.com/thing:4094861) by Nibb31 on Thingiverse
-- Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter) By jattie on Printables 
+- Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter) by jattie on Printables 
 - [Wind speed gauge anemometer v3.0](https://www.printables.com/model/625326-wind-speed-gauge-anemometer-v30) by shermluge on Printables
 - [SDS011 Dust sensor enclosure](https://www.thingiverse.com/thing:2516382) by sumpfing on Thingiverse
-- Wind vane: Currently in development and design phase I need help with balancing the model, 
+- Wind vane: Currently in development and design phase — help needed with balancing the model
 
 <p align="center">
   <img alt="Wind vane design in Fusion 360" src="docs/WindVaneFuison.png" width="48%">
   <img alt="Wind vane cross section selection" src="docs/WindVaneCrossSelection.png" width="48%">
 </p>
-
-
 
 Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (ElegantOTA), Nibb31, jattie, shermluge and the Arduino community.
 
@@ -340,7 +374,6 @@ Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (El
 
 ### Third‑party libraries used
 
-  
 - Adafruit BME680 — License: BSD
 - Adafruit Unified Sensor — License: BSD
 - Adafruit VEML7700 — License: BSD
@@ -348,6 +381,7 @@ Built by @JoshLongmire and contributors. Libraries by Adafruit, Ayush Sharma (El
 - ArduinoJson — License: MIT
 - ElegantOTA — License: MIT
 - ESP32 core (Arduino‑ESP32) — License: Apache‑2.0
+- Optional: SdsDustSensor — License: MIT
 
 Note:
 - License headers present in any source files from these libraries are retained unmodified.
@@ -355,6 +389,6 @@ Note:
 
 ### Project license
 
-This repository’s code is licensed under the PolyForm Noncommercial 1.0.0 license. See `LICENSE`.
+This repository's code is licensed under the PolyForm Noncommercial 1.0.0 license. See `LICENSE`.
 
 Documentation and images are licensed under CC BY‑4.0. See `LICENSE-CC-BY-4.0.md`.
