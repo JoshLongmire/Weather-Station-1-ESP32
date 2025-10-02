@@ -1,38 +1,65 @@
 ---
 alwaysApply: true
-description: API and CSV schema contract for ESP32 Weather Station; extend-only policy
+description: API and CSV schema contract for ESP32 Weather Station v18; extend-only policy
 ---
 
 ## Public API and CSV Contract
 
 Reference files:
-- Main sketch: [WaetherStation08_22_25v17.ino](mdc:WaetherStation08_22_25v17/WaetherStation08_22_25v17.ino)
+- Main sketch: [WaetherStation08_24_25_v18.ino](mdc:WaetherStation08_24_25_v18.ino/WaetherStation08_24_25_v18.ino.ino)
 - API docs: [docs/API.md](mdc:docs/API.md)
+- README: [README.md](mdc:README.md)
 
 ### /live JSON
 - Treat existing keys as stable. Add new fields only; never rename or remove.
 - Keep payload typically under 1.5 KB; use short names and provide units as separate fields only when needed.
-- Always include health booleans for optional subsystems: `sd_ok`, `rtc_ok`.
+- Always include health booleans for optional subsystems: `sd_ok`, `rtc_ok`, `bme_ok`, `sds_ok`, `wind_ok`, `wind_vane_ok`.
 - Preserve these core fields and meanings:
-  - `temp_unit`, `temp`, `temp_f`, `temp_c`, `hum`, `pressure`, `lux`, `batt`, `voc_kohm`
-  - Derived: `dew_f|dew_c`, `hi_f|hi_c`, `wbt_f|wbt_c`, `mslp_hPa`, `mslp_inHg`, `pressure_trend`, `forecast`, `general_forecast`
-  - Rain: `rain_mmph`, `rain_inph`, `rain_unit`
-  - System: `uptime`, `heap`, `flash_free_kb`, `time`, `boot_started`, `boot_count`, `rssi`, `ssid`, `wakeup_cause`, `wakeup_cause_text`, `last_alarm`, `last_sd_log`, `sd_free_kb`
+  - **Core sensors:** `temp_unit`, `temp`, `temp_f`, `temp_c`, `hum`, `pressure`, `lux`, `uv_mv`, `uv_index`, `batt`, `voc_kohm`
+  - **Derived:** `dew_f|dew_c`, `hi_f|hi_c`, `wbt_f|wbt_c`, `mslp_hPa`, `mslp_inHg`, `pressure_trend`, `forecast`, `general_forecast`, `forecast_detail`
+  - **Rain:** `rain_mmph`, `rain_inph`, `rain_unit`, `rain_1h_mm`, `rain_1h_in`, `rain_today_mm`, `rain_today_in`, `rain_event_mm`, `rain_event_in`, `rain_in_per_tip`
+  - **Wind:** `wind_hz`, `wind_mps`, `wind_kmh`, `wind_mph`, `wind_gust_mph`, `wind_ok`, `wind_avg_mph_1h`, `wind_dir`, `wind_dir_idx`, `wind_vane_ok`
+  - **Dust (SDS011):** `pm25_ugm3`, `pm10_ugm3`, `sds_ok`, `sds_awake`, `sds_warm`, `sds_auto_sleep_ms_left`
+  - **Leaf wetness:** `leaf_raw`, `leaf_pct`, `leaf_wet`, `leaf_wet_hours_today`, optional: `leaf_adc_dry`, `leaf_adc_wet` (when `leaf_debug=true`)
+  - **Forecast enrichment:** `storm_risk` (bool), `aqi_category` (string)
+  - **System:** `uptime`, `heap`, `flash_free_kb`, `time`, `boot_started`, `boot_count`, `rssi`, `ssid`, `wakeup_cause`, `wakeup_cause_text`, `last_alarm`, `last_sd_log`, `sd_free_kb`
 - If a sensor is absent, set a sane default (0, NaN guarded to 0, or empty string) and keep the field present.
 
 ### CSV `/logs.csv`
-- Preserve header order exactly; append new columns only at the end:
-  `timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,voltage,voc_kohm,mslp_inHg,rain,boot_count`
-- Do not change existing column names or ordering. If new metrics are logged, extend at the end and update `/view-logs` accordingly.
-- Write one data row per cadence event; during a boot, an additional "boot event" line may be appended with blanks for numeric fields.
-- Pressure units are hPa; MSLP column is in inHg.
-- Rain column uses current unit (mm/h or in/h) per `rain_unit` setting.
+- **Current header (v18.1, 24 columns):**
+  ```
+  timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
+  ```
+- **Preserve header order exactly; append new columns only at the end.**
+- Do not change existing column names or ordering. If new metrics are logged, extend at the end and update `/view-logs` table rendering accordingly.
+- Write one data row per cadence event via `performLogging()`.
+- During wake, `/live` performs a single CSV append per wake (guarded by `loggedThisWake` flag).
+- Units:
+  - Temperature: °F (Celsius available in `/live` JSON)
+  - Pressure: hPa (station pressure)
+  - MSLP: inHg
+  - Rain columns (`rain`, `rain_1h`, `rain_today`, `rain_event`): mm or inches per `rain_unit` setting at write time
+  - Wind: mph
+  - PM: µg/m³
+  - UV: mV and index (0-11+)
 
 ### Preferences and Backward Compatibility
 - Preferences stored as JSON string in namespace `app` key `cfg` must tolerate missing keys and write all keys on save.
-- When adding settings, update `AppConfig`, `loadAppConfig()`, `saveAppConfig()`, `/config` GET/POST UI.
+- When adding settings, update `AppConfig` struct, `loadAppConfig()`, `saveAppConfig()`, and `/config` GET/POST UI.
+- Config fields (v18.1):
+  - `altitude_m`, `temp_unit`, `bat_cal`, `time_12h`
+  - `lux_enter_day`, `lux_exit_day`, `log_interval_min`, `sleep_minutes`, `trend_threshold_hpa`
+  - `rain_unit`, `rain_tip_in`, `rain_debounce_ms`
+  - `mdns_host`, `sds_mode` (`off|pre1|pre2|pre5|cont`)
+  - `leaf_debug`, `debug_verbose`
+- Wi-Fi config stored in namespace `wifi` key `config` as JSON array of `{ssid, pass}` objects.
 - Never break existing dashboards/clients; defaults must preserve previous behavior.
 
 ### Web/UI Notes
-- Dashboard `/` relies on `/live` field presence and names; update labels dynamically but keep ids stable.
-- Keep client JS lightweight; avoid adding heavy libraries.
+- Dashboard `/` relies on `/live` field presence and names; update labels dynamically but keep element IDs stable for JavaScript.
+- Keep client JS lightweight; avoid adding heavy libraries (chart.js, etc.). Use native Canvas APIs.
+- `/view-logs` must render dark theme HTML table with filters; use `text/html; charset=utf-8` content type without chunked encoding for compatibility.
+- All endpoints respond with proper content types:
+  - `/` and `/view-logs`: `text/html; charset=utf-8`
+  - `/live`: `application/json`
+  - `/download`: `text/csv` with `Content-Disposition: attachment`
