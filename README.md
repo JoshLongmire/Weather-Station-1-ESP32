@@ -145,10 +145,14 @@ After boot and Wi‑Fi join, open:
 
 **http://<mdnsHost>.local** (default: `weatherstation1.local`)
 
+The dashboard features an organized layout with the weather forecast prominently displayed at the top-left corner, followed by logically grouped sensor tiles.
+
 <p align="center">
-  <img alt="Dashboard main page 1" src="docs/Mainpage1.png" width="32%">
-  <img alt="Dashboard main page 2" src="docs/Mainpage2.png" width="32%">
-  <img alt="Dashboard main page 3" src="docs/Mainpage3.png" width="32%">
+  <img alt="Dashboard main page - Forecast and sensors" src="docs/Mainweather1.png" width="90%">
+</p>
+
+<p align="center">
+  <img alt="Dashboard main page - Additional metrics and system status" src="docs/Mainweather2.png" width="90%">
 </p>
 
 <p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
@@ -171,13 +175,27 @@ After boot and Wi‑Fi join, open:
 | `/restart`      | GET/POST | Soft reboot                                 |
 
 #### View Logs page (`/view-logs`)
+
+The log viewer displays the last 200 CSV rows in a styled dark-theme table with powerful client-side filtering. Filter by any field using min/max ranges or value comparisons, with an auto-range button to populate from column data.
+
 <p align="center">
-  <img alt="View Logs page" src="docs/ViewLogspage.png" width="90%">
+  <img alt="View Logs page with dark theme table and filters" src="docs/ViewLogspage.png" width="95%">
+</p>
+
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Screenshot: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
 
 #### OTA Update page (`/update`)
+
+Over-the-air firmware updates using ElegantOTA with basic authentication protection.
+
 <p align="center">
-  <img alt="OTA Update page" src="docs/OTAUpdatepage.png" width="70%">
+  <img alt="OTA Update page" src="docs/OTAUpdatepage.png" width="80%">
+</p>
+
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Screenshot: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
 
 ### Example `/live` JSON (selected fields)
@@ -330,8 +348,18 @@ Open **`/config`** to adjust persistent settings (stored in Preferences). The co
 ### 🐛 Debug
 - `debug_verbose` — Verbose serial logging toggle  
 
+The configuration page is beautifully organized into sections with visual separators for easy navigation:
+
 <p align="center">
-  <img alt="Config settings page" src="docs/Configsettingspage.png" width="80%">
+  <img alt="Config settings page - System and Power settings" src="docs/Configpage1.png" width="90%">
+</p>
+
+<p align="center">
+  <img alt="Config settings page - Sensor calibration and debug settings" src="docs/Configpage2.png" width="90%">
+</p>
+
+<p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
+  Screenshots: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
 
 Wi‑Fi networks are managed via:
