@@ -221,8 +221,8 @@ Full history available in git commit log.
 See [Roadmap](README.md#roadmap-ideas) in README.md
 
 - MQTT support for home automation integration
-- Optional CO₂ sensor re-integration (SCD41)
-- Web-based calibration tools
+- Optional CO₂ sensor re-integration (SCD41) Not needed anymore
+- Web-based calibration tools in /config
 - RGB LED status indicators
 - Power metering (INA3221)
 

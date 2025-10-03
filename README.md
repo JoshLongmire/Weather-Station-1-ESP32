@@ -463,7 +463,7 @@ Wi‑Fi networks are managed via:
 
 - Optional AQ modules: MiCS‑5524, SCD41 (CO₂)  
 - Power metering: INA3221 (solar/battery monitoring)
-- RGB LED Status debugging
+- Soil temp and restences values 
 - Web-based calibration tools for sensors
 - MQTT support for home automation integration
 
