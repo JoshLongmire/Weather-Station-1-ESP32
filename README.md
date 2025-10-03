@@ -1,5 +1,11 @@
 # Weather‑Station‑1 (ESP32)
 
+[![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
+[![Arduino](https://img.shields.io/badge/Arduino-2.3.6+-00979D?logo=arduino&logoColor=white)](https://www.arduino.cc/)
+[![ESP32](https://img.shields.io/badge/ESP32-S3%20%7C%20Classic-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com/)
+[![Version](https://img.shields.io/badge/Version-v18.3-green.svg)](CHANGELOG.md)
+[![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen.svg)](https://github.com/JoshLongmire/Weather-Station-1-ESP32/commits/main)
+
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
 
 <p align="center">
@@ -16,6 +22,24 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
   Photos: © Weather‑Station‑1 contributors — Licensed CC BY‑4.0
 </p>
 
+---
+
+## 📑 Table of Contents
+
+- [Features](#features)
+- [Hardware](#hardware)
+- [Bill of Materials](#-bill-of-materials)
+- [Repo Layout](#repo-layout)
+- [Getting Started](#getting-started)
+- [Web Interface & API](#web-interface--api)
+- [CSV Log Schema](#csv-log-schema)
+- [Power Behavior](#power-behavior)
+- [Configuration](#configuration)
+- [Security Notes](#security-notes)
+- [Troubleshooting](#troubleshooting)
+- [Roadmap](#roadmap-ideas)
+- [3D Printed Components](#3d-printed-components)
+- [Licenses](#licenses-and-thirdparty-notices)
 
 ---
 
@@ -83,15 +107,60 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 
 ---
 
+## 🛒 Bill of Materials
+
+### Required Components
+
+| Component | Price (approx) | Notes | Link |
+|-----------|----------------|-------|------|
+| ESP32-S3 Dev Board (16MB/8MB) | $15-20 | Lonely Binary or equivalent | [Lonely Binary](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909) |
+| BME680 Sensor Module | $15-20 | Temperature, humidity, pressure, gas | [Adafruit](https://www.adafruit.com/product/3660) |
+| VEML7700 Light Sensor | $5-8 | 0-120k lux range | [Adafruit](https://www.adafruit.com/product/4162) |
+| DS3231 RTC Module | $5-8 | With CR2032 battery | Amazon/AliExpress |
+| MicroSD Card (8-32GB) | $5-10 | FAT32 formatted, Class 10+ | Any retailer |
+| Li-ion Battery (18650) | $5-10 | 3000mAh recommended | Any retailer |
+| Enclosure | $0-20 | 3D printed or IP65 box | See 3D files below |
+
+**Required Subtotal:** ~$50-90
+
+### Optional Sensors & Accessories
+
+| Component | Price (approx) | Feature | Link |
+|-----------|----------------|---------|------|
+| SDS011 PM Sensor | $25-30 | Air quality (PM2.5/PM10) | [Amazon](https://www.amazon.com/dp/B07FSDMRR5) |
+| GUVA-S12SD UV Sensor | $8-12 | UV index measurement | [Amazon](https://www.amazon.com/dp/B0CDWXCZ8L) |
+| Hall Anemometer + Wind Vane | $15-25 | Wind speed & direction | [Amazon](https://a.co/d/0iTu9BR) |
+| PCF8574 I/O Expander | $3-5 | For wind vane interface | [Amazon](https://a.co/d/fuVj1YV) |
+| LM393 Leaf Wetness Sensor | $5-8 | Agriculture applications | Amazon/AliExpress |
+| Tipping Bucket Rain Gauge | $15-30 | 3D printed or commercial | DIY (see 3D files) |
+| Solar Panel (6W) | $15-25 | For 24/7 solar operation | Any retailer |
+| MPPT Charge Controller (900mA) | $8-12 | Battery charging | [Amazon](https://www.amazon.com/dp/B07MML4YJV) |
+| Voltage Divider Resistors | $1-2 | 2x 100kΩ for battery sense | Any retailer |
+| Reed Switches | $3-5 | For rain gauge & wind | Any retailer |
+
+**Full System Cost:** ~$100-150 (basic) | ~$200-300 (fully loaded with all sensors + solar)
+
+### Tools Needed
+- Soldering iron & solder
+- Wire stripper
+- Multimeter (for calibration)
+- 3D printer (or access to one)
+- Basic hand tools
+
+---
+
 ## Repo layout
 
 ```text
 .
 ├─ WaetherStation08_24_25_v18.ino/   # Main Arduino sketch
 ├─ docs/API.md                       # API reference & schema
+├─ CHANGELOG.md                      # Version history & release notes
 ├─ .cursor/rules/                    # Cursor AI coding rules
 └─ README.md
 ```
+
+> **Latest Release:** v18.3 — Enhanced forecast system with multi-sensor fusion. See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ---
 
