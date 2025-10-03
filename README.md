@@ -179,7 +179,7 @@ The dashboard features an organized layout with the weather forecast prominently
 The log viewer displays the last 200 CSV rows in a styled dark-theme table with powerful client-side filtering. Filter by any field using min/max ranges or value comparisons, with an auto-range button to populate from column data.
 
 <p align="center">
-  <img alt="View Logs page with dark theme table and filters" src="docs/ViewLogspage.png" width="95%">
+  <img alt="View Logs page with dark theme table and filters" src="docs/view-logspage.png" width="95%">
 </p>
 
 <p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
