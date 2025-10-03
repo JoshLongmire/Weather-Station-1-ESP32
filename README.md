@@ -152,7 +152,7 @@ The dashboard features an organized layout with the weather forecast prominently
 </p>
 
 <p align="center">
-  <img alt="Dashboard main page - Additional metrics and system status" src="docs/Mainweather2.png" width="90%">
+  <img alt="Dashboard main page - Additional metrics and system status" src="docs/Mainweather0.png" width="90%">
 </p>
 
 <p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">
