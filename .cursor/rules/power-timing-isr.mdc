@@ -134,6 +134,7 @@ Data persisted across deep sleep cycles:
 - `pressureHourly_hPa[13]`, `pressureHourlyUnix[13]`, `pressureHourlyCount`, `pressureHourlyHead` — Pressure history for trend
 - `sdsLastPm25_ugm3`, `sdsLastPm10_ugm3`, `sdsLastPmUnix` — Last SDS011 PM readings (fallback during brief serve windows)
 - `wetRing[1440]`, `wetRingHead`, `wetRingCount`, `wetMinutesToday`, `wetTodayYday` — Leaf wetness 24-hour accumulation
+- `etoDailyMm`, `etoDailyYday`, `etoLastHourlyMm`, `etoTminToday`, `etoTmaxToday` — ETo accumulation and Tmin/Tmax for Hargreaves fallback
 
 ### Sleep Behavior Summary
 - **MODE_DAY:** Device stays awake indefinitely; performs periodic logging every `LOG_INTERVAL_MS`

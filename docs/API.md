@@ -59,12 +59,12 @@ This document describes the HTTP endpoints, persisted configuration, CSV schema,
 
 File: `/logs.csv`
 
-### Header (extended v18+, includes wind gust, rain totals):
+### Header (extended v18.2, includes wind gust, rain totals, leaf wetness, ETo):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event,leaf_raw,leaf_pct,leaf_wet,leaf_wet_hours,eto_hourly,eto_daily
 ```
 
-### Column descriptions (24 columns total):
+### Column descriptions (30 columns total):
 1. **timestamp** — Local time in format `YYYY-MM-DD HH:MM:SS` (12h or 24h per config)
 2. **temp_f** — Temperature in °F
 3. **humidity** — Relative humidity (%)
@@ -89,10 +89,16 @@ timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,
 22. **rain_1h** — Rain accumulation last 1 hour (mm or in per config unit)
 23. **rain_today** — Rain accumulation since local midnight (mm or in per config unit)
 24. **rain_event** — Rain accumulation since last ≥6h dry gap (mm or in per config unit)
+25. **leaf_raw** — EMA-smoothed raw ADC value from leaf wetness sensor (0-4095)
+26. **leaf_pct** — Wetness percentage (0-100%, 0=dry, 100=wet)
+27. **leaf_wet** — Wet/dry boolean state (0=dry, 1=wet)
+28. **leaf_wet_hours** — Accumulated wet hours since local midnight (decimal hours)
+29. **eto_hourly** — Reference evapotranspiration rate (mm/h or in/h per config unit)
+30. **eto_daily** — Cumulative reference evapotranspiration today (mm/day or in/day per config unit)
 
 ### Example row:
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34,2450,45,0,2.3,0.152,3.65
 ```
 
 ### Notes:
@@ -111,15 +117,28 @@ Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` 
 
 ### GET `/`
 
-**Description:** Returns the live dashboard HTML with dark theme, cards, real-time charts (180-point rolling history), and Wi‑Fi management UI.
+**Description:** Returns the live dashboard HTML with dark theme, organized cards, real-time charts (180-point rolling history), and Wi‑Fi management UI.
 
 **Features:**
+- **Organized tile layout** with forecast prominently displayed at top-left (2-column span)
 - Live sensor readings with 2-second auto-refresh
-- Canvas-based line charts for temperature, humidity, pressure, MSLP, lux, UV, battery, dew point, heat index, wet bulb, VOC, PM2.5/PM10, rain rate, wind speed, wind average
+- **Enhanced forecast tile** with advanced multi-sensor prediction and detailed outlook
+- Canvas-based line charts for temperature, humidity, pressure/MSLP, lux, UV, battery, dew point, heat index, wet bulb, VOC, PM2.5/PM10, rain rate, wind speed, wind average
+- **Categorized legend** with visual sections: Wind & Rain, Light & UV, Air Quality, Comfort, Agriculture, Forecast, System
+- Configurable pressure display (MSLP sea-level or station pressure)
 - Estimated battery % (Li-ion curve) in battery card header
 - Wi-Fi signal strength bars (▂▄▅▆▇) in RSSI card
 - Buttons/links: Download CSV, View Logs, OTA Update, Force Sleep, Restart Device, Config Settings, Clear Logs
-- Legend panel explaining all metrics and units
+
+**Dashboard Organization:**
+- Row 1: Weather Forecast (2-col), Pressure Trend, Temperature
+- Row 2: Humidity, Pressure/MSLP (user-configurable), Dew Point
+- Row 3: Wind metrics (speed, direction, avg, gust), Rain
+- Row 4: Light & UV (Lux, UV Index, UV mV)
+- Row 5: Air Quality (PM2.5, PM10, VOC)
+- Row 6: Comfort (Heat Index, Wet Bulb)
+- Row 7: Agriculture (Leaf Wetness, ETo)
+- Row 8: System Status
 
 **Response:** `text/html; charset=utf-8`
 
@@ -164,22 +183,36 @@ curl http://weatherstation1.local/
 
 #### Pressure Trends & Forecast
 - `pressure_trend` (string) — `Rising|Falling|Steady` (based on 3/6/12h Δ)
-- `forecast` (string) — Simple Zambretti-style label: `Settled Fine|Fine|Fair|Change|Unsettled|Rain`
-- `general_forecast` (string) — Rich forecast considering pressure, rain, UV, humidity: e.g., `Raining now`, `Rain likely`, `Improving / Fair`, `High UV / Sunny`, etc.
-- `forecast_detail` (string) — Detailed multi-line forecast with:
+- `forecast` (string) — **Enhanced multi-sensor prediction** with 40+ distinct states including:
+  - Storm conditions: `Severe Storm|Major Storm|Storm / Heavy Rain|Heavy Showers|Thunderstorms Possible|Severe Risk`
+  - Frontal systems: `Front Approaching|Becoming Cloudy|Clouds Increasing`
+  - Rain levels: `Heavy Rain|Raining|Light Rain|Heavy Showers Soon|Rain Likely|Rain Developing`
+  - Improving conditions: `Very Clear & Sunny|Clear & Bright|Clearing / Sunny|Improving|Slowly Improving`
+  - Settled weather: `Very Settled / Clear|Settled / Fine|Fair / Settled|Clear & Dry`
+  - Variable: `Partly Cloudy|Variable / Bright Spells|Cloudy / Stable|Unsettled / Variable`
+- `general_forecast` (string) — Concise forecast summary for quick reference
+- `forecast_detail` (string) — Comprehensive multi-line forecast with:
+  - **Storm warnings** (Severe/High/Possible risk with ⚠️ alerts)
+  - **Frontal passage detection** (approaching cold/warm fronts)
   - Air quality category (Good/Moderate/USG/Unhealthy/Very Unhealthy/Hazardous)
   - UV risk (Low/Moderate/High/Very High/Extreme)
-  - Wind descriptor (Calm/Light/Breezy/Windy/Very Windy) with speed, direction, gust
-  - Humidity note (Humid/Dry)
-  - Falling pressure warning
-  - Rain risk (Low/Moderate/High/Now)
+  - Enhanced wind info (Calm/Light/Breezy/Windy/Very Windy) with speed, direction, and gust warnings
+  - Humidity comfort notes (Very Humid/Humid/Dry)
+  - Pressure tendency (Rapid P Drop/Falling P/Rising P)
+  - Rain status (Raining Now) or risk (High/Moderate/Low)
   - Rain totals (1h/Today/Event in configured unit)
   - Heat risk (Low/Caution/Extreme)
-  - Storm risk (Low/Slight/Possible)
   - Fog/Frost risk (when conditions met)
   - Rain 3/6/12h trend arrows (↑ rising, → steady, ↓ falling)
-- `storm_risk` (bool) — True when storm risk is not "Low"
+- `storm_risk` (bool) — True when storm risk is elevated (not "Minimal")
 - `aqi_category` (string) — Air quality category from PM2.5 (Good/Moderate/USG/Unhealthy/Very Unhealthy/Hazardous)
+
+**Forecast Algorithm:**  
+Uses advanced multi-sensor fusion combining pressure trends, wind speed/gusts, humidity, temperature, dew point, UV index, rain rate, and light levels. Includes:
+- Severe weather scoring (0-3 scale based on pressure drop rate, wind gusts, atmospheric instability)
+- Frontal detection (cold front: falling P + rising wind; warm front: falling P + high humidity)
+- Storm risk levels: Minimal/Low/Slight/Possible/High/Severe
+- Temperature trend analysis using dew point spread
 
 #### Rain Gauge
 - `rain_mmph` (float) — Instantaneous rain rate (mm/h)
@@ -220,6 +253,21 @@ curl http://weatherstation1.local/
 - `leaf_wet_hours_today` (float) — Accumulated wet hours since local midnight
 - `leaf_adc_dry` (int) — Raw calibration endpoint DRY (only when `leaf_debug=true`)
 - `leaf_adc_wet` (int) — Raw calibration endpoint WET (only when `leaf_debug=true`)
+- `leaf_wet_on_pct` (float) — Wet threshold ON % (only when `leaf_debug=true`)
+- `leaf_wet_off_pct` (float) — Wet threshold OFF % (only when `leaf_debug=true`)
+
+#### Reference Evapotranspiration (FAO-56)
+- `eto_hourly_mm` (float) — Hourly ETo rate (mm/h)
+- `eto_hourly_in` (float) — Hourly ETo rate (in/h)
+- `eto_daily_mm` (float) — Cumulative ETo today (mm/day)
+- `eto_daily_in` (float) — Cumulative ETo today (in/day)
+- `eto_unit` (string) — Current CSV/UI unit: `mm/day` or `in/day`
+
+**Method:**
+- Prefers FAO-56 Penman-Monteith when temperature, humidity, wind speed, pressure, and lux are available
+- Falls back to Hargreaves-Samani when solar radiation (lux) is unavailable or during night
+- Daily accumulation resets at local midnight
+- Hourly values are logged at each cadence interval
 
 #### System & Diagnostics
 - `uptime` (int) — Uptime in seconds since current boot
@@ -273,6 +321,11 @@ curl http://weatherstation1.local/
   "leaf_pct": 45.2,
   "leaf_wet": false,
   "leaf_wet_hours_today": 2.3,
+  "eto_hourly_mm": 0.152,
+  "eto_hourly_in": 0.006,
+  "eto_daily_mm": 3.65,
+  "eto_daily_in": 0.144,
+  "eto_unit": "mm/day",
   "uptime": 1234,
   "heap": 176520,
   "flash_free_kb": 2048,
@@ -395,28 +448,51 @@ curl "http://weatherstation1.local/view-logs?field=temp&type=between&min=60&max=
 
 **Response:** `text/html`
 
-**Displayed Fields:**
+**Displayed Fields (organized into sections):**
+
+**🖥️ System Settings**
 - `altitude_m` (float) — Altitude in meters for MSLP calculation
 - `temp_unit` (select: F/C) — Temperature display preference
 - `bat_cal` (float) — Battery voltage calibration multiplier (default: 1.08)
 - `time_12h` (select: 12/24) — Clock format
+- `mdns_host` (string) — mDNS hostname label (no `.local` suffix)
+
+**🔋 Power & Timing**
 - `lux_enter_day` (float) — Light threshold to enter DAY mode (default: 1600 lux)
 - `lux_exit_day` (float) — Light threshold to exit DAY mode (default: 1400 lux)
 - `log_interval_min` (int) — CSV logging interval while awake (1-1440 minutes, default: 10)
 - `sleep_minutes` (int) — Deep sleep duration between wakes (1-1440 minutes, default: 10)
+
+**🌡️ Pressure & Forecast**
 - `trend_threshold_hpa` (float) — Pressure delta threshold for trend classification (0.1-5.0 hPa, default: 0.6)
+- `show_mslp` (select: mslp/station) — **NEW:** Dashboard pressure display: MSLP (sea-level, inHg) or station pressure (hPa, not altitude-adjusted). Default: MSLP
+
+**🌧️ Rain Gauge**
 - `rain_unit` (select: mm/in) — Rain rate unit for CSV/UI
 - `rain_tip_in` (float) — Inches per tipping bucket tip (0.001-0.1, default: 0.011)
 - `rain_debounce_ms` (int) — ISR debounce window in milliseconds (50-500, default: 150)
-- `mdns_host` (string) — mDNS hostname label (no `.local` suffix)
+
+**💨 Air Quality (SDS011)**
 - `sds_mode` (select) — SDS011 duty preset:
   - `off` — Keep sensor asleep
   - `pre1` — Wake 1 minute before each log
   - `pre2` — Wake 2 minutes before each log (default)
   - `pre5` — Wake 5 minutes before each log
   - `cont` — Continuous operation while awake
-- `leaf_debug` (select: Off/On) — Show raw LEAF_ADC_DRY/WET values on dashboard for field calibration
-- `debug_verbose` (select: No/Yes) — Enable verbose serial logging
+
+**🍃 Leaf Wetness Sensor**
+- `leaf_debug` (select: Off/On) — Show raw ADC and calibration values on dashboard for field calibration
+- `leaf_adc_dry` (int) — Raw ADC value when sensor is dry (0-4095, default: 3300)
+- `leaf_adc_wet` (int) — Raw ADC value when sensor is wet (0-4095, default: 1400)
+- `leaf_wet_on_pct` (float) — % threshold to declare WET (0-100%, default: 55.0)
+- `leaf_wet_off_pct` (float) — % threshold to declare DRY (0-100%, default: 45.0)
+
+**💧 Evapotranspiration (ETo)**
+- `eto_unit` (select: mm/in) — ETo unit for CSV/UI (mm/day or in/day)
+- `latitude` (float) — Latitude in degrees for ETo solar radiation calculation (−90 to +90, negative = South, default: 40.0)
+
+**🐛 Debug**
+- `debug_verbose` (select: Off/On) — Enable verbose serial logging
 
 **Example:**
 ```bash
@@ -439,12 +515,19 @@ curl http://weatherstation1.local/config
 - `lim` (int) — Log interval in minutes (1-1440)
 - `slm` (int) — Sleep duration in minutes (1-1440)
 - `pth` (float) — Pressure trend threshold (0.1-5.0 hPa)
+- `pdisp` (string) — Pressure display: `mslp` (sea-level) or `station` (raw)
 - `ru` (string) — Rain unit: `mm` or `in`
 - `rtip` (float) — Rain tip size (0.001-0.1 inches)
 - `rdb` (int) — Rain debounce (50+ ms)
 - `mdns` (string) — mDNS hostname label
 - `sds` (string) — SDS011 mode: `off|pre1|pre2|pre5|cont`
 - `leafdbg` (string) — Leaf debug: `0` or `1`
+- `leafdry` (int) — Leaf ADC dry calibration (0-4095)
+- `leafwet` (int) — Leaf ADC wet calibration (0-4095)
+- `leafweton` (float) — Leaf wet threshold ON (0-100%)
+- `leafwetoff` (float) — Leaf wet threshold OFF (0-100%)
+- `etou` (string) — ETo unit: `mm` or `in`
+- `lat` (float) — Latitude (−90 to 90 degrees)
 - `dbg` (string) — Verbose debug: `0` or `1`
 
 **Response:** `302` redirect to `/config`
@@ -461,12 +544,19 @@ curl -X POST \
   -F lim=10 \
   -F slm=10 \
   -F pth=0.6 \
+  -F pdisp=mslp \
   -F ru=mm \
   -F rtip=0.011 \
   -F rdb=150 \
   -F mdns=weatherstation1 \
   -F sds=pre2 \
   -F leafdbg=0 \
+  -F leafdry=3300 \
+  -F leafwet=1400 \
+  -F leafweton=55.0 \
+  -F leafwetoff=45.0 \
+  -F etou=mm \
+  -F lat=40.0 \
   -F dbg=0 \
   http://weatherstation1.local/config -i
 ```
@@ -613,12 +703,19 @@ ping weatherstation1.local
 - `log_interval_min` (int) — Log interval while awake (minutes)
 - `sleep_minutes` (int) — Sleep duration between wakes (minutes)
 - `trend_threshold_hpa` (float) — Pressure trend threshold (hPa)
+- `show_mslp` (bool) — Display MSLP (sea-level pressure, inHg) or station pressure (hPa) on dashboard
 - `rain_unit` (string) — `in` or `mm`
 - `rain_tip_in` (float) — Inches per bucket tip
 - `rain_debounce_ms` (int) — Rain ISR debounce (ms)
 - `mdns_host` (string) — mDNS hostname label
 - `sds_mode` (string) — `off|pre1|pre2|pre5|cont`
 - `leaf_debug` (bool) — Show raw leaf calibration values
+- `leaf_adc_dry` (int) — Leaf ADC dry endpoint (0-4095)
+- `leaf_adc_wet` (int) — Leaf ADC wet endpoint (0-4095)
+- `leaf_wet_on_pct` (float) — Wet threshold ON (0-100%)
+- `leaf_wet_off_pct` (float) — Wet threshold OFF (0-100%)
+- `eto_unit` (string) — `in` or `mm`
+- `latitude` (float) — Latitude in degrees (−90 to +90)
 - `debug_verbose` (bool) — Verbose serial logging
 
 **Structure Example:**
@@ -633,12 +730,19 @@ ping weatherstation1.local
   "log_interval_min": 10,
   "sleep_minutes": 10,
   "trend_threshold_hpa": 0.6,
+  "show_mslp": true,
   "rain_unit": "mm",
   "rain_tip_in": 0.011,
   "rain_debounce_ms": 150,
   "mdns_host": "weatherstation1",
   "sds_mode": "pre2",
   "leaf_debug": false,
+  "leaf_adc_dry": 3300,
+  "leaf_adc_wet": 1400,
+  "leaf_wet_on_pct": 55.0,
+  "leaf_wet_off_pct": 45.0,
+  "eto_unit": "mm",
+  "latitude": 40.0,
   "debug_verbose": false
 }
 ```
@@ -916,38 +1020,60 @@ Maps pressure delta to trend string.
 **Returns:** `Rising|Falling|Steady`
 
 #### `const char* zambrettiSimple(float mslp_hPa, const char* trend)`
-Simplified Zambretti forecast label.
+Simplified Zambretti forecast label (legacy function, still available).
 
 **Returns:** `Settled Fine|Fine|Fair|Change|Unsettled|Rain`
 
-#### `const char* generalForecastFromSensors(...)`
-Rich general forecast considering pressure, trend, humidity, temperature, rain rate, lux, UV.
+#### `const char* enhancedZambrettiAdv(float mslp_hPa, const char* trend, float windMph, float hum)`
+**NEW:** Enhanced Zambretti algorithm with wind and humidity integration.
 
-**Returns:** Concise forecast string like:
-- `Raining now`
-- `Rain likely`
-- `Unsettled / Showers`
-- `Cloudy / Chance of rain`
-- `Improving / Fair`
-- `Sunny / High UV`
-- `Humid but fair`
-- `Neutral`
+**Returns:** 15+ distinct forecast states including:
+- Storm conditions: `Severe Storm|Storm / Heavy Rain|Heavy Showers|Rain / Unsettled`
+- Improving: `Very Settled / Clear|Settled / Fine|Fair / Clearing|Improving`
+- Stable: `Variable / Partly Cloudy|Unsettled|Stormy`
+
+#### `const char* generalForecastFromSensors(...)`
+**ENHANCED:** Advanced multi-sensor forecast with deep sensor fusion.
+
+**Algorithm:**
+- Combines pressure trends, wind speed/gusts, humidity, temperature, dew point, UV index, rain rate, and light levels
+- Frontal detection (cold front: falling P + rising wind; warm front: falling P + high humidity)
+- Severe weather scoring (0-3 scale based on pressure drop rate, wind gusts, atmospheric instability)
+- Storm risk assessment with multiple indicators
+
+**Returns:** 40+ distinct forecast states including:
+- Immediate conditions: `Heavy Rain|Raining|Light Rain`
+- Warnings: `Severe Risk|Thunderstorms Possible|Front Approaching|Major Storm`
+- Detailed conditions: `Heavy Showers Soon|Rain Likely|Rain Developing|Cloudy / Chance Rain`
+- Improving: `Very Clear & Sunny|Clear & Bright|Clearing / Sunny|Slowly Improving`
+- Settled: `Clear & Dry|Sunny / Settled|Fair / Settled|Humid but Stable`
+- Variable: `Partly Cloudy|Variable / Bright Spells|Cloudy / Stable|Damp / Overcast`
+
+#### Supporting Forecast Functions (NEW)
+- `bool approachingFront(...)` — Detects cold/warm fronts using multi-sensor signals
+- `int severePotential(...)` — Scores severe weather risk (0=None, 1=Low, 2=Moderate, 3=High)
+- `const char* analyzeTempTrend(...)` — Temperature trend from dew point spread
+- `const char* stormRiskLabel(...)` — Enhanced storm risk with 7 levels
 
 #### `String buildForecastDetail(...)`
-Detailed multi-line forecast with all available metrics.
+**ENHANCED:** Comprehensive multi-line forecast with all available metrics and warnings.
 
 **Includes:**
-- Air quality category (from PM2.5)
-- UV risk category
-- Wind descriptor (Calm/Light/Breezy/Windy/Very Windy) with speed, direction, gust
-- Humidity note (Humid/Dry)
-- Falling pressure warning
-- Rain risk (Low/Moderate/High/Now)
-- Rain totals (1h/Today/Event)
+- **Storm warnings** (Severe/High/Possible risk with ⚠️ emoji alerts)
+- **Frontal passage alerts** ("Front Approaching" when conditions detected)
+- Air quality category (from PM2.5: Good/Moderate/USG/Unhealthy/Very Unhealthy/Hazardous)
+- UV risk category (Low/Moderate/High/Very High/Extreme)
+- Enhanced wind descriptor (Calm/Light/Breezy/Windy/Very Windy) with:
+  - Wind speed and direction
+  - Gust warnings (⚠️ if >25 mph)
+- Humidity comfort notes (Very Humid/Humid/Dry)
+- Pressure tendency (Rapid P Drop/Falling P/Rising P)
+- Rain status (Raining Now) or risk (High/Moderate/Low)
+- Rain totals (1h/Today/Event in configured unit)
 - Heat risk (Low/Caution/Extreme)
-- Storm risk (Low/Slight/Possible)
-- Fog/Frost warnings
-- Rain 3/6/12h trend arrows (↑↓→)
+- Storm risk (Minimal/Low/Slight/Possible/High/Severe)
+- Fog/Frost warnings (when temperature and humidity conditions met)
+- Rain 3/6/12h trend arrows (↑ rising, → steady, ↓ falling)
 
 ### Derived Meteorology Utilities
 
@@ -1196,8 +1322,42 @@ if __name__ == '__main__':
 
 ## API Change Log
 
-### v18.1 (Current)
-- Added wind gust, rain totals (1h/today/event) to CSV (now 24 columns)
+### v18.3 (Current)
+- **Enhanced Multi-Sensor Forecast System**
+  - Added `enhancedZambrettiAdv()` with 40+ distinct forecast states
+  - Integrated wind speed/gusts into forecast generation
+  - Added frontal passage detection (cold/warm front indicators)
+  - Added severe weather scoring (0-3 scale with multiple criteria)
+  - Enhanced storm risk levels: Minimal/Low/Slight/Possible/High/Severe
+  - Added temperature trend analysis using dew point spread
+- **Dashboard Improvements**
+  - Reorganized tile layout with forecast at top-left (2-column span)
+  - Logical grouping: Core sensors, Wind & Rain, Light & UV, Air Quality, Comfort, Agriculture, System
+  - Enhanced forecast detail with storm warnings (⚠️), frontal alerts, and comprehensive outlook
+- **Configuration Page Redesign**
+  - Organized settings into 7 logical sections: System, Power & Timing, Pressure & Forecast, Rain Gauge, Air Quality, Leaf Wetness, ETo, Debug
+  - Added visual section separators with emoji icons and colored headers
+  - Improved layout with section backgrounds and better spacing
+- **Pressure Display Toggle**
+  - Added `show_mslp` config option to choose between MSLP (sea-level, inHg) or station pressure (hPa)
+  - Dashboard conditionally shows one pressure tile based on user preference
+  - Legend dynamically updates to explain selected pressure metric
+- **Legend Enhancements**
+  - Removed CO₂ reference (sensor not present)
+  - Reorganized into visual categories matching dashboard layout
+  - Added clearer, more concise descriptions
+
+### v18.2
+- Added FAO-56 reference evapotranspiration (ETo) with Penman-Monteith and Hargreaves-Samani methods
+- Added ETo to CSV (hourly rate + daily cumulative, now 30 columns total)
+- Added ETo to `/live` JSON (`eto_hourly_mm`, `eto_hourly_in`, `eto_daily_mm`, `eto_daily_in`, `eto_unit`)
+- Added ETo config options (`eto_unit`, `latitude`)
+- Added runtime-configurable leaf wetness calibration (`leaf_adc_dry`, `leaf_adc_wet`, `leaf_wet_on_pct`, `leaf_wet_off_pct`)
+- Enhanced leaf debug display to show all calibration values and current raw ADC
+- Added leaf wetness to CSV (raw ADC, %, wet boolean, wet hours, now 28+ columns)
+
+### v18.1
+- Added wind gust, rain totals (1h/today/event) to CSV (24 columns)
 - Added leaf wetness support (`leaf_pct`, `leaf_wet`, `leaf_wet_hours_today`)
 - Added `forecast_detail` with rich multi-line forecast
 - Added `storm_risk`, `aqi_category` booleans to `/live`
@@ -1250,12 +1410,27 @@ curl -X POST \
   http://weatherstation1.local/config
 ```
 
-### Agriculture/greenhouse (leaf wetness + humidity)
+### Agriculture/greenhouse (leaf wetness + humidity + ETo)
 ```bash
 curl -X POST \
   -F leafdbg=1 \
   -F lim=5 \
+  -F etou=mm \
+  -F lat=35.5 \
   http://weatherstation1.local/config
+```
+
+### Irrigation scheduling (ETo-based)
+```bash
+# Set your location's latitude for accurate solar radiation estimation
+curl -X POST \
+  -F lat=34.05 \
+  -F etou=in \
+  -F lim=60 \
+  http://weatherstation1.local/config
+
+# Monitor daily ETo for smart irrigation
+curl -s http://weatherstation1.local/live | jq '.eto_daily_in, .rain_today_in'
 ```
 
 ---

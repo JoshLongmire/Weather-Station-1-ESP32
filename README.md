@@ -30,12 +30,15 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 - **Power modes:** DAY (awake, periodic logs) / NIGHT (short serve window → deep sleep)
 - **OTA:** ElegantOTA at `/update` (basic auth)
 - **Advanced Features:** 
+  - **Enhanced Multi-Sensor Forecast** — Advanced weather prediction using deep sensor fusion (pressure trends, humidity, wind, temperature, UV, rain) with storm detection, frontal passage alerts, and 40+ distinct forecast states
   - Rain accumulation tracking (1h, daily, event totals with ≥6h dry gap reset)
   - Wind speed & gust (5-second max over 10 minutes) with 1-hour rolling average
   - Wind direction (8-point compass via PCF8574 I²C expander)
-  - Leaf wetness monitoring with 24-hour wet-hours accumulation
+  - Leaf wetness monitoring with 24-hour wet-hours accumulation and runtime calibration
+  - Reference evapotranspiration (FAO-56 ETo) with Penman-Monteith and Hargreaves-Samani methods
   - Dust sensor duty cycling (SDS011) with configurable presets
-  - Rich forecast with detailed metrics (air quality, UV risk, wind, rain trends, storm risk)
+  - Organized dashboard with forecast prominently displayed at top-left
+  - Configurable pressure display (MSLP sea-level or station pressure)
 
 > Full endpoint and data schema: see **[docs/API.md](docs/API.md)**.
 
@@ -210,6 +213,12 @@ After boot and Wi‑Fi join, open:
   "leaf_wet": false,
   "leaf_wet_hours_today": 2.3,
   
+  "eto_hourly_mm": 0.152,
+  "eto_hourly_in": 0.006,
+  "eto_daily_mm": 3.65,
+  "eto_daily_in": 0.144,
+  "eto_unit": "mm/day",
+  
   "dew_f": 50.3,
   "hi_f": 73.9,
   "wbt_f": 54.4,
@@ -255,14 +264,14 @@ After boot and Wi‑Fi join, open:
 
 File: `/logs.csv`
 
-Header (extended v18+, includes wind, gust, rain totals, and leaf wetness):
+Header (extended v18.2, includes wind, gust, rain totals, leaf wetness, and ETo):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event,leaf_raw,leaf_pct,leaf_wet,leaf_wet_hours,eto_hourly,eto_daily
 ```
 
-Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting):
+Example row (units: temp °F, pressure hPa, MSLP inHg, rain mm/h or in/h per setting, ETo mm or in per setting):
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34,2450,45,0,2.3,0.152,3.65
 ```
 
 Note: Clearing logs via `/reset` POST writes the extended header above. Legacy logs (pre‑v18) are backward-compatible.
@@ -280,24 +289,46 @@ Note: Clearing logs via `/reset` POST writes the extended header above. Legacy l
 
 ## Configuration
 
-Open **`/config`** to adjust persistent settings (stored in Preferences):
+Open **`/config`** to adjust persistent settings (stored in Preferences). The configuration page is organized into logical sections for easy navigation:
 
-- `altitude_m` — used for MSLP calculation  
+### 🖥️ System Settings
+- `altitude_m` — Altitude in meters; used for MSLP calculation  
 - `temp_unit` — `F` or `C` (UI formatting)  
 - `bat_cal` — ADC voltage calibration multiplier  
 - `time_12h` — 12h or 24h display toggle  
-- `rain_unit` — `mm/h` or `in/h` for log/UI rain values  
-- `rain_tip_in` — inches per bucket tip (default 0.011); used for accumulation totals  
-- `rain_debounce_ms` — ISR debounce window (50–500 ms typical)  
-- `lux_enter_day` — Daylight entry (lux). Default: 1600  
-- `lux_exit_day` — Night entry (lux). Default: 1400  
+- `mdns_host` — mDNS hostname label (no `.local`)  
+
+### 🔋 Power & Timing
+- `lux_enter_day` — Daylight entry threshold (lux). Default: 1600  
+- `lux_exit_day` — Night entry threshold (lux). Default: 1400  
 - `log_interval_min` — Log interval (minutes) while awake. Default: 10  
 - `sleep_minutes` — Deep sleep duration (minutes) between wakes. Default: 10  
+
+### 🌡️ Pressure & Forecast
 - `trend_threshold_hpa` — Pressure trend threshold (hPa). Default: 0.6  
-- `mdns_host` — mDNS hostname label (no `.local`)  
+- `show_mslp` — **NEW:** Display MSLP (sea-level, inHg) or station pressure (hPa) on dashboard. Default: MSLP  
+
+### 🌧️ Rain Gauge
+- `rain_unit` — `mm/h` or `in/h` for log/UI rain values  
+- `rain_tip_in` — Inches per bucket tip (default 0.011); used for accumulation totals  
+- `rain_debounce_ms` — ISR debounce window (50–500 ms typical)  
+
+### 💨 Air Quality
 - `sds_mode` — SDS011 duty: `off`, `pre1` (1 min before log), `pre2` (2 min), `pre5` (5 min), `cont` (continuous while awake)  
-- `leaf_debug` — Show raw LEAF_ADC_DRY/WET values on dashboard for field calibration  
-- `debug_verbose` — verbose serial logging toggle  
+
+### 🍃 Leaf Wetness
+- `leaf_debug` — Show raw ADC and calibration values on dashboard  
+- `leaf_adc_dry` — Dry ADC calibration (0-4095, default: 3300)  
+- `leaf_adc_wet` — Wet ADC calibration (0-4095, default: 1400)  
+- `leaf_wet_on_pct` — Wet threshold ON % (default: 55.0)  
+- `leaf_wet_off_pct` — Wet threshold OFF % (default: 45.0)  
+
+### 💧 Evapotranspiration
+- `eto_unit` — ETo unit: `mm/day` or `in/day`  
+- `latitude` — Latitude in degrees for ETo solar radiation calculation (default: 40.0)  
+
+### 🐛 Debug
+- `debug_verbose` — Verbose serial logging toggle  
 
 <p align="center">
   <img alt="Config settings page" src="docs/Configsettingspage.png" width="80%">
