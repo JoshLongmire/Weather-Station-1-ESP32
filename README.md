@@ -3,7 +3,7 @@
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 [![Arduino](https://img.shields.io/badge/Arduino-2.3.6+-00979D?logo=arduino&logoColor=white)](https://www.arduino.cc/)
 [![ESP32](https://img.shields.io/badge/ESP32-S3%20%7C%20Classic-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com/)
-[![Version](https://img.shields.io/badge/Version-v18.3-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-v19.0-green.svg)](CHANGELOG.md)
 [![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen.svg)](https://github.com/JoshLongmire/Weather-Station-1-ESP32/commits/main)
 
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
@@ -61,7 +61,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
   - Leaf wetness monitoring with 24-hour wet-hours accumulation and runtime calibration
   - Reference evapotranspiration (FAO-56 ETo) with Penman-Monteith and Hargreaves-Samani methods
   - Dust sensor duty cycling (SDS011) with configurable presets
-  - Organized dashboard with forecast prominently displayed at top-left
+  - Enhanced organized dashboard with forecast prominently displayed at top-left (3-column span for comprehensive details)
   - Configurable pressure display (MSLP sea-level or station pressure)
 
 > Full endpoint and data schema: see **[docs/API.md](docs/API.md)**.
@@ -160,7 +160,7 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 └─ README.md
 ```
 
-> **Latest Release:** v18.3 — Enhanced forecast system with multi-sensor fusion. See [CHANGELOG.md](CHANGELOG.md) for full version history.
+> **Latest Release:** v19.0 — Enhanced dashboard layout with 3-column forecast tile for comprehensive weather information. See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ---
 
@@ -214,14 +214,14 @@ After boot and Wi‑Fi join, open:
 
 **http://<mdnsHost>.local** (default: `weatherstation1.local`)
 
-The dashboard features an organized layout with the weather forecast prominently displayed at the top-left corner, followed by logically grouped sensor tiles.
+The dashboard features an enhanced organized layout with the weather forecast prominently displayed at the top-left corner spanning 3 columns for comprehensive weather information, followed by logically grouped sensor tiles.
 
 <p align="center">
-  <img alt="Dashboard main page - Forecast and sensors" src="docs/Mainweather1.png" width="90%">
+  <img alt="Dashboard main page - Forecast and sensors" src="docs/Mainstaiton.png (1).png" width="90%">
 </p>
 
 <p align="center">
-  <img alt="Dashboard main page - Additional metrics and system status" src="docs/Mainweather0.png" width="90%">
+  <img alt="Dashboard main page - Additional metrics and system status" src="docs/Mainstaiton.png (2).png" width="90%">
 </p>
 
 <p align="center" style="font-size: 12px; opacity: 0.8; margin-top: -4px;">

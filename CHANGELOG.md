@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v19.1] - 2025-01-13
+
+### Fixed
+- **VEML7700 lux reading limitation** - Added non-linear correction for high light levels (>20k lux) to extend sensor range to full 120k lux capability
+- **Compilation errors** - Fixed raw literal string syntax issues in `handleRoot()` function
+
+### Changed
+- **README documentation** - Updated dashboard screenshots to use new `Mainstaiton.png (1).png` and `Mainstaiton.png (2).png` images
+
+---
+
+## [v19.0] - 2025-01-13
+
+### Added - Enhanced Dashboard Layout with 3-Column Forecast Tile
+- **Expanded forecast detail tile** now spans 3 columns (previously 2) for more comprehensive weather information display
+- **Reorganized dashboard layout** with improved tile grouping:
+  - Row 1: Weather Forecast (3-column span for detailed outlook)
+  - Row 2: Key Metrics (Pressure Trend, Temperature, Humidity)
+  - Row 3: Core Environmental Sensors (MSLP/Station Pressure, Dew Point)
+  - Row 4: Wind & Rain metrics
+  - Row 5: Light & UV sensors
+  - Row 6: Air Quality (PM2.5, PM10, VOC)
+  - Row 7: Comfort metrics (Heat Index, Wet Bulb)
+  - Row 8: Agriculture (Leaf Wetness, ETo)
+  - Row 9: System Status
+- **Enhanced forecast detail display** with more space for comprehensive multi-line weather information including:
+  - Storm warnings and frontal passage alerts
+  - Detailed wind information with direction and gust warnings
+  - Air quality categories and UV risk assessments
+  - Rain status and accumulation totals
+  - Comfort and agricultural indicators
+
+
+---
+
 ## [v18.3] - 2025-01-03
 
 ### Added - Enhanced Multi-Sensor Forecast System

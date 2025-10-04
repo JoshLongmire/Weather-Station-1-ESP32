@@ -120,9 +120,9 @@ Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` 
 **Description:** Returns the live dashboard HTML with dark theme, organized cards, real-time charts (180-point rolling history), and Wi‑Fi management UI.
 
 **Features:**
-- **Organized tile layout** with forecast prominently displayed at top-left (2-column span)
+- **Enhanced organized tile layout** with forecast prominently displayed at top-left (3-column span for comprehensive details)
 - Live sensor readings with 2-second auto-refresh
-- **Enhanced forecast tile** with advanced multi-sensor prediction and detailed outlook
+- **Enhanced forecast tile** with advanced multi-sensor prediction and detailed outlook spanning 3 columns
 - Canvas-based line charts for temperature, humidity, pressure/MSLP, lux, UV, battery, dew point, heat index, wet bulb, VOC, PM2.5/PM10, rain rate, wind speed, wind average
 - **Categorized legend** with visual sections: Wind & Rain, Light & UV, Air Quality, Comfort, Agriculture, Forecast, System
 - Configurable pressure display (MSLP sea-level or station pressure)
@@ -130,15 +130,16 @@ Base: device IP (e.g., `http://192.168.1.50`) or mDNS `http://<mdnsHost>.local` 
 - Wi-Fi signal strength bars (▂▄▅▆▇) in RSSI card
 - Buttons/links: Download CSV, View Logs, OTA Update, Force Sleep, Restart Device, Config Settings, Clear Logs
 
-**Dashboard Organization:**
-- Row 1: Weather Forecast (2-col), Pressure Trend, Temperature
-- Row 2: Humidity, Pressure/MSLP (user-configurable), Dew Point
-- Row 3: Wind metrics (speed, direction, avg, gust), Rain
-- Row 4: Light & UV (Lux, UV Index, UV mV)
-- Row 5: Air Quality (PM2.5, PM10, VOC)
-- Row 6: Comfort (Heat Index, Wet Bulb)
-- Row 7: Agriculture (Leaf Wetness, ETo)
-- Row 8: System Status
+**Dashboard Organization (v19.0):**
+- Row 1: Weather Forecast (3-column span for detailed outlook)
+- Row 2: Key Metrics (Pressure Trend, Temperature, Humidity)
+- Row 3: Core Environmental Sensors (MSLP/Station Pressure, Dew Point)
+- Row 4: Wind & Rain metrics (speed, direction, avg, gust, rain)
+- Row 5: Light & UV (Lux, UV Index, UV mV)
+- Row 6: Air Quality (PM2.5, PM10, VOC)
+- Row 7: Comfort (Heat Index, Wet Bulb)
+- Row 8: Agriculture (Leaf Wetness, ETo)
+- Row 9: System Status
 
 **Response:** `text/html; charset=utf-8`
 
@@ -1322,7 +1323,22 @@ if __name__ == '__main__':
 
 ## API Change Log
 
-### v18.3 (Current)
+### v19.0 (Current)
+- **Enhanced Dashboard Layout with 3-Column Forecast Tile**
+  - Expanded forecast detail tile to span 3 columns (previously 2) for comprehensive weather information display
+  - Reorganized dashboard layout with improved tile grouping:
+    - Row 1: Weather Forecast (3-column span for detailed outlook)
+    - Row 2: Key Metrics (Pressure Trend, Temperature, Humidity)
+    - Row 3: Core Environmental Sensors (MSLP/Station Pressure, Dew Point)
+    - Row 4: Wind & Rain metrics
+    - Row 5: Light & UV sensors
+    - Row 6: Air Quality (PM2.5, PM10, VOC)
+    - Row 7: Comfort metrics (Heat Index, Wet Bulb)
+    - Row 8: Agriculture (Leaf Wetness, ETo)
+    - Row 9: System Status
+  - Enhanced forecast detail display with more space for comprehensive multi-line weather information
+
+### v18.3
 - **Enhanced Multi-Sensor Forecast System**
   - Added `enhancedZambrettiAdv()` with 40+ distinct forecast states
   - Integrated wind speed/gusts into forecast generation
