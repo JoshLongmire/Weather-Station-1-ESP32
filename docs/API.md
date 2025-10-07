@@ -12,11 +12,22 @@ This document describes the HTTP endpoints, persisted configuration, CSV schema,
   - Optional: Hall anemometer (wind speed + gust)
   - Optional: PCF8574 wind vane (8-point compass direction)
   - Optional: LM393 leaf wetness sensor (moisture detection with 24h accumulation)
+- Optional: Accessories and verified purchase links are listed in the project **Bill of Materials**; see README or the quick list below.
 - Storage: SD card (`/logs.csv`)
 - Time: DS3231 RTC (preferred) with daily NTP syncing and drift correction
 - Connectivity: Wi‑Fi STA with AP fallback, mDNS
 - OTA: ElegantOTA at `/update` (basic auth)
 - Modes: DAY (stay awake, periodic logs) / NIGHT (short serve window, deep sleep)
+- MQTT: PubSubClient for home automation integration
+
+### Bill of Materials (Quick Links)
+- GPIO Expander PCF8574: [Amazon](https://www.amazon.com/dp/B098B5CGYJ?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- SDS011 High Precision PM2.5 Sensor: [Amazon](https://www.amazon.com/dp/B08QRJSVW7?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- VEML7700 Ambient Light Sensor Module: [Amazon](https://www.amazon.com/dp/B09KGYF83T?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- GUVA-S12SD UV Detect Sensor: [Amazon](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- 3144E Hall Sensor Modules (10 pcs): [Amazon](https://www.amazon.com/dp/B09723WH5V?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- BME680 Temperature/Humidity/Pressure/VOC: [Amazon](https://www.amazon.com/dp/B0CDWXZNY7?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- 5W Solar Panel: [Amazon](https://www.amazon.com/dp/B0DPDNGYDV?ref=ppx_yo2ov_dt_b_fed_asin_title)
 
 ## Pins, Interfaces, and Constants
 
@@ -351,6 +362,11 @@ Uses advanced multi-sensor fusion combining pressure trends, wind speed/gusts, h
   "wakeup_cause_text": "TIMER",
   "last_alarm": "2025-01-01 15:50:00",
   "sd_free_kb": 512000,
+  "mqtt_enabled": true,
+  "mqtt_connected": true,
+  "mqtt_last_publish": 1735748537,
+  "mqtt_broker": "192.168.1.100",
+  "mqtt_topic_prefix": "weatherstation",
   "dew_f": 50.3,
   "dew_c": 10.2,
   "hi_f": 73.9,
@@ -495,6 +511,33 @@ curl "http://weatherstation1.local/view-logs?field=temp&type=between&min=60&max=
 **🐛 Debug**
 - `debug_verbose` (select: Off/On) — Enable verbose serial logging
 
+**📊 Dashboard Settings**
+- `dashboard_refresh_rate` (int) — Dashboard auto-refresh rate in seconds (1-60, default: 2)
+- `show_advanced_metrics` (select: Off/On) — Display advanced meteorological calculations (default: On)
+- `dark_mode` (select: Off/On) — UI theme preference: Dark mode for night viewing, Light mode for bright conditions (default: On)
+- `chart_data_points` (int) — Number of historical data points in line charts (60-500, default: 180)
+
+**🌦️ Enhanced Forecasting**
+- `enhanced_forecast_enabled` (select: Off/On) — Enable advanced multi-sensor forecasting with 40+ forecast states (default: On)
+- `forecast_sensitivity` (select: 1-5) — Forecast response sensitivity: 1=Conservative, 2=Stable, 3=Balanced, 4=Sensitive, 5=Very Sensitive (default: 3)
+- `storm_detection_enabled` (select: Off/On) — Enable automatic storm detection and severe weather alerts (default: On)
+- `storm_risk_threshold` (float) — Minimum storm risk level to trigger alerts (0.5-5.0 scale, default: 2.0)
+
+**📡 WiFi & MQTT Integration**
+- `wifi_reconnect_delay` (int) — Seconds between WiFi reconnection attempts (5-300, default: 30)
+- `mqtt_enabled` (select: Off/On) — Enable MQTT publishing for home automation integration (default: Off)
+- `mqtt_broker` (string) — MQTT broker IP address or hostname (max 100 chars)
+- `mqtt_port` (int) — MQTT broker TCP port (1-65535, default: 1883)
+- `mqtt_topic` (string) — MQTT topic prefix for all published messages (max 50 chars, default: "weatherstation")
+- `mqtt_interval` (int) — MQTT publish interval in minutes (1-60, default: 5)
+
+
+**🔋 Battery & Power Management**
+- `battery_low_threshold` (float) — Low battery voltage threshold for warnings (2.5-4.2V, default: 3.3V)
+- `battery_critical_threshold` (float) — Critical battery voltage for forced shutdown (2.5-4.2V, default: 3.0V)
+- `solar_power_mode` (select: Off/On) — Enable solar power optimizations (default: Off)
+- `deep_sleep_timeout` (int) — Safety timeout before forced deep sleep in DAY mode (30-1440 minutes, default: 180)
+
 **Example:**
 ```bash
 curl http://weatherstation1.local/config
@@ -530,6 +573,24 @@ curl http://weatherstation1.local/config
 - `etou` (string) — ETo unit: `mm` or `in`
 - `lat` (float) — Latitude (−90 to 90 degrees)
 - `dbg` (string) — Verbose debug: `0` or `1`
+- `dashref` (int) — Dashboard refresh rate (1-60 seconds)
+- `advmet` (string) — Show advanced metrics: `0` or `1`
+- `darkmod` (string) — Dark mode: `0` or `1`
+- `chartpts` (int) — Chart data points (60-500)
+- `enhfore` (string) — Enhanced forecast: `0` or `1`
+- `forecsen` (int) — Forecast sensitivity (1-5)
+- `stormdet` (string) — Storm detection: `0` or `1`
+- `stormthr` (float) — Storm risk threshold (0.5-5.0)
+- `wifidelay` (int) — WiFi reconnect delay (5-300 seconds)
+- `mqtten` (string) — Enable MQTT: `0` or `1`
+- `mqttbrok` (string) — MQTT broker address (max 100 chars)
+- `mqttport` (int) — MQTT port (1-65535)
+- `mqtttop` (string) — MQTT topic prefix (max 50 chars)
+- `mqttint` (int) — MQTT publish interval (1-60 minutes)
+- `batlow` (float) — Low battery threshold (2.5-4.2V)
+- `batcrit` (float) — Critical battery threshold (2.5-4.2V)
+- `solar` (string) — Solar power mode: `0` or `1`
+- `sleeptimeout` (int) — Deep sleep timeout (30-1440 minutes)
 
 **Response:** `302` redirect to `/config`
 
@@ -718,6 +779,25 @@ ping weatherstation1.local
 - `eto_unit` (string) — `in` or `mm`
 - `latitude` (float) — Latitude in degrees (−90 to +90)
 - `debug_verbose` (bool) — Verbose serial logging
+- `dashboard_refresh_rate` (int) — Dashboard auto-refresh rate in seconds (1-60)
+- `show_advanced_metrics` (bool) — Display advanced meteorological calculations
+- `dark_mode` (bool) — UI theme preference
+- `chart_data_points` (int) — Number of historical data points in charts
+- `enhanced_forecast_enabled` (bool) — Enable enhanced multi-sensor forecasting
+- `forecast_sensitivity` (int) — Forecast sensitivity level (1-5)
+- `storm_detection_enabled` (bool) — Enable storm detection alerts
+- `storm_risk_threshold` (float) — Storm risk threshold for alerts
+- `wifi_reconnect_delay` (int) — Seconds between WiFi reconnection attempts
+- `mqtt_enabled` (bool) — Enable MQTT publishing
+- `mqtt_broker` (string) — MQTT broker address
+- `mqtt_port` (int) — MQTT broker port
+- `mqtt_topic` (string) — MQTT topic prefix
+- `mqtt_interval` (int) — MQTT publish interval (minutes)
+- `esphome_discovery_enabled` (bool) — Enable ESPHome discovery for Home Assistant integration
+- `battery_low_threshold` (float) — Low battery voltage threshold
+- `battery_critical_threshold` (float) — Critical battery voltage threshold
+- `solar_power_mode` (bool) — Enable solar power optimizations
+- `deep_sleep_timeout` (int) — Timeout before forced deep sleep (minutes)
 
 **Structure Example:**
 ```json
@@ -744,7 +824,26 @@ ping weatherstation1.local
   "leaf_wet_off_pct": 45.0,
   "eto_unit": "mm",
   "latitude": 40.0,
-  "debug_verbose": false
+  "debug_verbose": false,
+  "dashboard_refresh_rate": 2,
+  "show_advanced_metrics": true,
+  "dark_mode": true,
+  "chart_data_points": 180,
+  "enhanced_forecast_enabled": true,
+  "forecast_sensitivity": 3,
+  "storm_detection_enabled": true,
+  "storm_risk_threshold": 2.0,
+  "wifi_reconnect_delay": 30,
+  "mqtt_enabled": false,
+  "mqtt_broker": "",
+  "mqtt_port": 1883,
+  "mqtt_topic": "weatherstation",
+  "mqtt_interval": 5,
+  "esphome_discovery_enabled": false,
+  "battery_low_threshold": 3.3,
+  "battery_critical_threshold": 3.0,
+  "solar_power_mode": false,
+  "deep_sleep_timeout": 180
 }
 ```
 
@@ -1323,7 +1422,22 @@ if __name__ == '__main__':
 
 ## API Change Log
 
-### v19.0 (Current)
+### v19.2 (Current)
+- **Enhanced Configuration System**
+  - Added Dashboard Settings section with customizable refresh rate, advanced metrics display, dark mode theme, and chart data points
+  - Added Enhanced Forecasting section with multi-sensor forecasting toggle, sensitivity levels, storm detection, and risk thresholds
+  - Added WiFi & MQTT Integration section with reconnection delay, MQTT broker configuration, and publish intervals
+  - Added Battery & Power Management section with low/critical thresholds, solar power mode, and deep sleep timeout
+  - Expanded configuration page with 4 new organized sections and comprehensive descriptive help text
+  - All new settings persist across reboots and support backward compatibility
+
+### v19.1
+- **VEML7700 Lux Reading Enhancement**
+  - Fixed lux reading limitation with non-linear correction for high light levels (>20k lux)
+  - Extended sensor range to full 120k lux capability
+  - Fixed compilation errors with raw literal string syntax
+
+### v19.0
 - **Enhanced Dashboard Layout with 3-Column Forecast Tile**
   - Expanded forecast detail tile to span 3 columns (previously 2) for comprehensive weather information display
   - Reorganized dashboard layout with improved tile grouping:

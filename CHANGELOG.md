@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v19.2] - 2025-01-13
+
+### Added - Advanced Configuration System
+- **Dashboard Settings Section** — New configuration section with 4 customizable options:
+  - `dashboard_refresh_rate` — Dashboard auto-refresh rate (1-60 seconds, default: 2)
+  - `show_advanced_metrics` — Toggle advanced meteorological calculations display (default: On)
+  - `dark_mode` — UI theme preference: Dark mode for night viewing, Light mode for bright conditions (default: On)
+  - `chart_data_points` — Number of historical data points in line charts (60-500, default: 180)
+- **Enhanced Forecasting Section** — New configuration section with 4 advanced weather prediction controls:
+  - `enhanced_forecast_enabled` — Enable/disable advanced multi-sensor forecasting with 40+ forecast states (default: On)
+  - `forecast_sensitivity` — Forecast response sensitivity levels: 1=Conservative, 2=Stable, 3=Balanced, 4=Sensitive, 5=Very Sensitive (default: 3)
+  - `storm_detection_enabled` — Enable automatic storm detection and severe weather alerts (default: On)
+  - `storm_risk_threshold` — Minimum storm risk level to trigger alerts (0.5-5.0 scale, default: 2.0)
+- **WiFi & MQTT Integration Section** — Home automation support with 6 configuration options:
+  - `wifi_reconnect_delay` — Configurable delay between WiFi reconnection attempts (5-300 seconds, default: 30)
+  - `mqtt_enabled` — Enable/disable MQTT publishing for home automation systems (default: Off)
+  - `mqtt_broker` — MQTT broker IP address or hostname (Home Assistant, Node-RED, Mosquitto)
+  - `mqtt_port` — MQTT broker TCP port (1-65535, default: 1883 for standard MQTT)
+  - `mqtt_topic` — MQTT topic prefix for all published sensor data (default: "weatherstation")
+  - `mqtt_interval` — MQTT publish interval in minutes (1-60, default: 5)
+- **Battery & Power Management Section** — Smart power management with 4 optimization controls:
+  - `battery_low_threshold` — Low battery voltage threshold for warnings (2.5-4.2V, default: 3.3V)
+  - `battery_critical_threshold` — Critical battery voltage for emergency shutdown (2.5-4.2V, default: 3.0V)
+  - `solar_power_mode` — Enable solar power optimizations and adaptive power management (default: Off)
+  - `deep_sleep_timeout` — Safety timeout before forced deep sleep in DAY mode (30-1440 minutes, default: 180)
+
+### Enhanced - Configuration Page
+- **Comprehensive Help Text** — Added detailed, descriptive explanations for all configuration settings with:
+  - Step-by-step calibration instructions for sensors
+  - Usage recommendations and typical value ranges
+  - Impact explanations (battery life, performance, accuracy)
+  - Real-world examples and use cases
+- **Organized Layout** — Configuration page now includes 11 logical sections:
+  - 🖥️ System Settings, 🔋 Power & Timing, 🌡️ Pressure & Forecast
+  - 🌧️ Rain Gauge, 💨 Air Quality, 🍃 Leaf Wetness, 💧 Evapotranspiration, 🔧 Sensor Calibration
+  - 🐛 Debug, 📊 Dashboard Settings, 🌦️ Enhanced Forecasting, 📡 WiFi & MQTT Integration, 🔋 Battery & Power Management
+- **Backward Compatibility** — All new settings support graceful fallback to defaults for existing installations
+
+### Improved - User Experience
+- **Dashboard Customization** — Users can now customize refresh rates, themes, and chart history based on their needs
+- **Professional Features** — Advanced metrics toggle for meteorologists and weather enthusiasts
+- **Battery Optimization** — Configurable refresh rates, chart data points, and smart battery thresholds for extended operation
+- **Accessibility** — Dark/light mode support for different viewing conditions
+- **Weather Intelligence** — Fine-tunable forecasting sensitivity and storm detection parameters
+- **Home Automation** — Full MQTT integration for Home Assistant, Node-RED, and other automation platforms
+- **Solar Operations** — Solar power mode with adaptive power management and optimized sleep schedules
+- **Network Resilience** — Configurable WiFi reconnection delays to reduce battery drain during outages
+
+---
+
 ## [v19.1] - 2025-01-13
 
 ### Fixed
@@ -255,7 +305,7 @@ Full history available in git commit log.
 
 See [Roadmap](README.md#roadmap-ideas) in README.md
 
-- MQTT support for home automation integration
+- ~~MQTT support for home automation integration~~ ✅ **Implemented in v19.2**
 - Optional CO₂ sensor re-integration (SCD41) Not needed anymore
 - Web-based calibration tools in /config
 - RGB LED status indicators

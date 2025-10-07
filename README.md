@@ -3,7 +3,7 @@
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm%20Noncommercial-blue.svg)](LICENSE)
 [![Arduino](https://img.shields.io/badge/Arduino-2.3.6+-00979D?logo=arduino&logoColor=white)](https://www.arduino.cc/)
 [![ESP32](https://img.shields.io/badge/ESP32-S3%20%7C%20Classic-E7352C?logo=espressif&logoColor=white)](https://www.espressif.com/)
-[![Version](https://img.shields.io/badge/Version-v19.0-green.svg)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/Version-v19.2-green.svg)](CHANGELOG.md)
 [![Maintained](https://img.shields.io/badge/Maintained-Yes-brightgreen.svg)](https://github.com/JoshLongmire/Weather-Station-1-ESP32/commits/main)
 
 An ESP32‑based, solar‑friendly weather station that logs to SD, serves a live dark‑mode dashboard, and exposes a clean HTTP API.
@@ -63,6 +63,11 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
   - Dust sensor duty cycling (SDS011) with configurable presets
   - Enhanced organized dashboard with forecast prominently displayed at top-left (3-column span for comprehensive details)
   - Configurable pressure display (MSLP sea-level or station pressure)
+  - **Advanced Configuration System** — Comprehensive settings with descriptive help text for dashboard customization, enhanced forecasting, and sensor calibration
+  - **Dashboard Customization** — Adjustable refresh rates, dark/light themes, advanced metrics display, and chart history
+  - **Enhanced Forecasting Controls** — Multi-sensor forecasting toggle, sensitivity levels, storm detection, and risk thresholds
+  - **MQTT Integration** — Home automation support with configurable broker, topics, and publish intervals (Home Assistant, Node-RED compatible)
+  - **Battery & Power Management** — Smart battery thresholds, solar power optimizations, and configurable deep sleep timeout
 
 > Full endpoint and data schema: see **[docs/API.md](docs/API.md)**.
 
@@ -114,8 +119,8 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 | Component | Price (approx) | Notes | Link |
 |-----------|----------------|-------|------|
 | ESP32-S3 Dev Board (16MB/8MB) | $15-20 | Lonely Binary or equivalent | [Lonely Binary](https://lonelybinary.com/en-us/collections/esp32/products/esp32-s3-ipex?variant=43699253706909) |
-| BME680 Sensor Module | $15-20 | Temperature, humidity, pressure, gas | [Adafruit](https://www.adafruit.com/product/3660) |
-| VEML7700 Light Sensor | $5-8 | 0-120k lux range | [Adafruit](https://www.adafruit.com/product/4162) |
+| BME680 Sensor Module | $15-20 | Temperature, humidity, pressure, gas | [Amazon](https://www.amazon.com/dp/B0CDWXZNY7?ref=ppx_yo2ov_dt_b_fed_asin_title) |
+| VEML7700 Light Sensor | $5-8 | 0-120k lux range | [Amazon](https://www.amazon.com/dp/B09KGYF83T?ref=ppx_yo2ov_dt_b_fed_asin_title) |
 | DS3231 RTC Module | $5-8 | With CR2032 battery | Amazon/AliExpress |
 | MicroSD Card (8-32GB) | $5-10 | FAT32 formatted, Class 10+ | Any retailer |
 | Li-ion Battery (18650) | $5-10 | 3000mAh recommended | Any retailer |
@@ -127,18 +132,27 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 
 | Component | Price (approx) | Feature | Link |
 |-----------|----------------|---------|------|
-| SDS011 PM Sensor | $25-30 | Air quality (PM2.5/PM10) | [Amazon](https://www.amazon.com/dp/B07FSDMRR5) |
-| GUVA-S12SD UV Sensor | $8-12 | UV index measurement | [Amazon](https://www.amazon.com/dp/B0CDWXCZ8L) |
+| SDS011 PM Sensor | $25-30 | Air quality (PM2.5/PM10) | [Amazon](https://www.amazon.com/dp/B08QRJSVW7?ref=ppx_yo2ov_dt_b_fed_asin_title) |
+| GUVA-S12SD UV Sensor | $8-12 | UV index measurement | [Amazon](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title) |
 | Hall Anemometer + Wind Vane | $15-25 | Wind speed & direction | [Amazon](https://a.co/d/0iTu9BR) |
-| PCF8574 I/O Expander | $3-5 | For wind vane interface | [Amazon](https://a.co/d/fuVj1YV) |
+| PCF8574 I/O Expander | $3-5 | For wind vane interface | [Amazon](https://www.amazon.com/dp/B098B5CGYJ?ref=ppx_yo2ov_dt_b_fed_asin_title) |
 | LM393 Leaf Wetness Sensor | $5-8 | Agriculture applications | Amazon/AliExpress |
 | Tipping Bucket Rain Gauge | $15-30 | 3D printed or commercial | DIY (see 3D files) |
-| Solar Panel (6W) | $15-25 | For 24/7 solar operation | Any retailer |
+| Solar Panel (5W) | $10-20 | For 24/7 solar operation | [Amazon](https://www.amazon.com/dp/B0DPDNGYDV?ref=ppx_yo2ov_dt_b_fed_asin_title) |
 | MPPT Charge Controller (900mA) | $8-12 | Battery charging | [Amazon](https://www.amazon.com/dp/B07MML4YJV) |
 | Voltage Divider Resistors | $1-2 | 2x 100kΩ for battery sense | Any retailer |
 | Reed Switches | $3-5 | For rain gauge & wind | Any retailer |
 
 **Full System Cost:** ~$100-150 (basic) | ~$200-300 (fully loaded with all sensors + solar)
+
+#### Verified purchase links (as used by this project)
+- GPIO Expander PCF8574: [Amazon](https://www.amazon.com/dp/B098B5CGYJ?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- SDS011 High Precision PM2.5 Sensor: [Amazon](https://www.amazon.com/dp/B08QRJSVW7?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- VEML7700 Ambient Light Sensor Module: [Amazon](https://www.amazon.com/dp/B09KGYF83T?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- GUVA-S12SD UV Detect Sensor: [Amazon](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- 3144E Hall Sensor Modules (10 pcs): [Amazon](https://www.amazon.com/dp/B09723WH5V?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- BME680 Temperature/Humidity/Pressure/VOC: [Amazon](https://www.amazon.com/dp/B0CDWXZNY7?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- 5W Solar Panel: [Amazon](https://www.amazon.com/dp/B0DPDNGYDV?ref=ppx_yo2ov_dt_b_fed_asin_title)
 
 ### Tools Needed
 - Soldering iron & solder
@@ -160,7 +174,7 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 └─ README.md
 ```
 
-> **Latest Release:** v19.0 — Enhanced dashboard layout with 3-column forecast tile for comprehensive weather information. See [CHANGELOG.md](CHANGELOG.md) for full version history.
+> **Latest Release:** v19.2 — Advanced configuration system with dashboard customization, enhanced forecasting controls, and comprehensive sensor calibration settings. See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ---
 
@@ -417,6 +431,33 @@ Open **`/config`** to adjust persistent settings (stored in Preferences). The co
 ### 🐛 Debug
 - `debug_verbose` — Verbose serial logging toggle  
 
+### 📊 Dashboard Settings
+- `dashboard_refresh_rate` — Dashboard auto-refresh rate in seconds (1-60, default: 2)
+- `show_advanced_metrics` — Display advanced meteorological calculations (wet bulb, heat index, dew point, etc.)
+- `dark_mode` — UI theme preference: Dark mode for night viewing, Light mode for bright conditions
+- `chart_data_points` — Number of historical data points in line charts (60-500, default: 180)
+
+### 🌦️ Enhanced Forecasting
+- `enhanced_forecast_enabled` — Enable advanced multi-sensor forecasting with 40+ forecast states
+- `forecast_sensitivity` — Forecast response sensitivity (1=Conservative to 5=Very Sensitive, default: 3)
+- `storm_detection_enabled` — Enable automatic storm detection and severe weather alerts
+- `storm_risk_threshold` — Minimum storm risk level to trigger alerts (0.5-5.0 scale, default: 2.0)
+
+### 📡 WiFi & MQTT Integration
+- `wifi_reconnect_delay` — Seconds between WiFi reconnection attempts (5-300, default: 30)
+- `mqtt_enabled` — Enable MQTT publishing for home automation integration (Home Assistant, Node-RED)
+- `mqtt_broker` — MQTT broker IP address or hostname
+- `mqtt_port` — MQTT broker TCP port (default: 1883)
+- `mqtt_topic` — MQTT topic prefix for published messages (default: "weatherstation")
+- `mqtt_interval` — MQTT publish interval in minutes (1-60, default: 5)
+
+
+### 🔋 Battery & Power Management
+- `battery_low_threshold` — Low battery voltage threshold for warnings (2.5-4.2V, default: 3.3V)
+- `battery_critical_threshold` — Critical battery voltage for forced shutdown (2.5-4.2V, default: 3.0V)
+- `solar_power_mode` — Enable solar power optimizations (default: Off)
+- `deep_sleep_timeout` — Safety timeout before forced deep sleep in DAY mode (30-1440 minutes, default: 180)
+
 The configuration page is beautifully organized into sections with visual separators for easy navigation:
 
 <p align="center">
@@ -463,9 +504,9 @@ Wi‑Fi networks are managed via:
 
 - Optional AQ modules: MiCS‑5524, SCD41 (CO₂)  
 - Power metering: INA3221 (solar/battery monitoring)
-- Soil temp and restences values 
+- Soil temp and resistance values 
 - Web-based calibration tools for sensors
-- MQTT support for home automation integration
+- ~~MQTT support for home automation integration~~ ✅ **Implemented in v19.2**
 
 ---
 
