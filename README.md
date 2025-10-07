@@ -151,6 +151,9 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 - VEML7700 Ambient Light Sensor Module: [Amazon](https://www.amazon.com/dp/B09KGYF83T?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - GUVA-S12SD UV Detect Sensor: [Amazon](https://www.amazon.com/dp/B0CDWXCZ8L?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - 3144E Hall Sensor Modules (10 pcs): [Amazon](https://www.amazon.com/dp/B09723WH5V?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- LM393 Rain Drops Sensor: [Amazon](https://www.amazon.com/dp/B01DK29K28?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- KOFU/OKI Reed Switches (6 pcs): [Amazon](https://www.amazon.com/dp/B0CW9418F6?ref=ppx_yo2ov_dt_b_fed_asin_title)
+- DS3231 RTC Module (AT24C32): [Amazon](https://www.amazon.com/AITRIP-Precision-AT24C32-Arduino-Raspberry/dp/B09KPC8JZQ/ref=sr_1_5?crid=1BBM1A7IR757A&dib=eyJ2IjoiMSJ9.Av0ZT44mgzkEZLgrGYpmsc1bvAskDxukuEiBsIwEXkYXsy4pV1QL2kCmA6ATcUEOhtm86LcHQ3Ou8hoDzPAtWIL_MkbCcCGZqELL_JF2uIvDc5X5CHjf0QYUkwW1rr16e5uazRba5GyGkncrnCRiF33UoRrt3gmwKCu_76rOcOhUzpetDdE9-LbBG-jY1gpHfbe9xFJP3_h11FboQfv7qtcjeKRFkHxdTkyHdOtSbhA.KEgg1t8EO4x71IAhc9Eu8IFMK_E0WWU1dN-m4JL65EI&dib_tag=se&keywords=DS3231+RTC+Module&qid=1759834055&sprefix=ds3231+rtc+module+%2Caps%2C352&sr=8-5)
 - BME680 Temperature/Humidity/Pressure/VOC: [Amazon](https://www.amazon.com/dp/B0CDWXZNY7?ref=ppx_yo2ov_dt_b_fed_asin_title)
 - 5W Solar Panel: [Amazon](https://www.amazon.com/dp/B0DPDNGYDV?ref=ppx_yo2ov_dt_b_fed_asin_title)
 
