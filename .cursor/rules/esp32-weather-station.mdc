@@ -1,15 +1,23 @@
 ---
 alwaysApply: true
-description: Stable firmware guardrails and navigation for ESP32 Weather Station v18 (Arduino IDE 2.3.6, ESP32-S3/classic ESP32)
+description: Firmware rules for ESP32 Weather Station v20 modular architecture (Arduino IDE 2.3.6, ESP32-S3/classic ESP32)
 globs: *.ino,*.cpp,*.h
 ---
 
 ## ESP32 Weather Station – Cursor Rules
 
 Reference files:
-- Main sketch: [WaetherStation08_24_25_v18.ino](mdc:WaetherStation08_24_25_v18.ino/WaetherStation08_24_25_v18.ino.ino)
+- **v20 Modular:** [WeatherStationv20_modular.ino](mdc:WeatherStationv20_modular/WeatherStationv20_modular.ino) ← **PRIMARY**
+- **v18 Legacy:** [WaetherStation08_24_25_v18.ino](mdc:WaetherStation08_24_25_v18.ino/WaetherStation08_24_25_v18.ino.ino)
 - README: [README.md](mdc:README.md)
 - API & schema: [docs/API.md](mdc:docs/API.md)
+
+### Architecture Evolution: v18→v20
+**v20 introduces modular architecture:**
+- **Main orchestrator:** 336 lines (coordination only)
+- **7 modules:** config, sensors, weather, power, storage, mqtt, web
+- **100% backward compatibility:** All APIs, CSV schema, and behavior preserved
+- **Benefits:** Isolated changes, easier maintenance, reduced merge conflicts
 
 ### Build and environment
 - Target: Arduino IDE 2.3.6+, board "ESP32S3 Dev Module" (Lonely Binary ESP32-S3 Dev Board, 16MB Flash / 8MB PSRAM) or classic "ESP32 Dev Module"
@@ -22,24 +30,27 @@ Reference files:
 - Do not introduce blocking watchdog‑risky code in `loop()`; keep new work non‑blocking or time‑sliced.
 
 ### Project anchors and invariants
-- HTTP endpoints and schemas are defined by handlers in the main sketch. Treat `/live` JSON and `/logs.csv` header as a stable API.
+- **v20 Modular structure:** Work with modules in `config.h`, `sensors.h`, `weather.h`, `power.h`, `storage.h`, `mqtt.h`, `web.h`
+- **Main orchestrator pattern:** Keep main `.ino` file focused on coordination, not implementation
+- HTTP endpoints and schemas are defined by handlers in the web module. Treat `/live` JSON and `/logs.csv` header as a stable API.
   - **JSON:** Only add new fields; never rename or remove existing ones. Ensure defaults when sensors are absent.
-  - **CSV (v18.1, 24 columns):** 
+  - **CSV (v18.2, 30 columns):** 
     ```
-    timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event
+    timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event,leaf_raw,leaf_pct,leaf_wet,leaf_wet_hours,eto_hourly,eto_daily
     ```
     Append new columns only at the end and update `/view-logs` table rendering accordingly.
-- Persistent settings (`Preferences` namespace `app`) are stored as a JSON string. When adding settings:
+- Persistent settings (`Preferences` namespace `app`) managed by config module as JSON string. When adding settings:
   - Extend `AppConfig` struct, update `loadAppConfig()` and `saveAppConfig()` with backward‑compatible defaults.
-  - Update `/config` GET/POST form fields and help text.
-  - Current config fields: `altitude_m`, `temp_unit`, `bat_cal`, `time_12h`, `lux_enter_day`, `lux_exit_day`, `log_interval_min`, `sleep_minutes`, `trend_threshold_hpa`, `rain_unit`, `rain_tip_in`, `rain_debounce_ms`, `mdns_host`, `sds_mode`, `leaf_debug`, `debug_verbose`
-- Power model (DAY/NIGHT) and timing:
+  - Update `/config` GET/POST form fields and help text in web module.
+  - Current config fields: `altitude_m`, `temp_unit`, `bat_cal`, `time_12h`, `lux_enter_day`, `lux_exit_day`, `log_interval_min`, `sleep_minutes`, `trend_threshold_hpa`, `rain_unit`, `rain_tip_in`, `rain_debounce_ms`, `mdns_host`, `sds_mode`, `leaf_debug`, `leaf_adc_dry`, `leaf_adc_wet`, `leaf_wet_on_pct`, `leaf_wet_off_pct`, `eto_unit`, `latitude`, `debug_verbose`
+- Power model (DAY/NIGHT) and timing managed by power module:
   - Respect `UPTIME_STARTUP` (1800s = 30 min) / `UPTIME_CONFIG` (120s = 2 min) windows and `updateDayNightState()` decisions.
   - Use `prepareDeepSleep()` to enter sleep; it programs RTC A1 alarm (minute match) and ESP32 timer wake, then enters deep sleep.
   - Initial boot: 30-minute config window → 2-minute decision run → normal DAY/NIGHT cycling.
 
 ### Concurrency, ISR, and timing rules
 - ISRs must be extremely short and placed in IRAM (`IRAM_ATTR`). No heap allocation, no `Serial`, no long math.
+- **ISRs belong in sensors module:** `rainIsr()`, `windIsr()` - maintain in sensors.cpp with proper critical sections
 - Shared ISR state must be `volatile` and protected with `portENTER_CRITICAL`/`portEXIT_CRITICAL` when copied in tasks.
 - Active ISRs:
   - `rainIsr()` — Rain gauge tipping bucket (GPIO18, FALLING edge, debounced via `rainDebounceMsRuntime`)
@@ -49,9 +60,31 @@ Reference files:
   - For UI refresh, use the `/live` handler (polled every 2 seconds by dashboard) rather than adding timers in `loop()`.
   - Wind 1-hour rolling average: sampled once per minute in `loop()` via `windAvg1hLastSampleMs` timer.
   - Leaf wetness: sampled every `LEAF_READ_MS` (1 second) via `leafLastReadMs` timer; wet-hours accumulated per minute via `nextWetTickMs`.
-- Do not add long `delay()` calls. Use millisecond scheduling with `millis()` comparisons.
+  - Do not add long `delay()` calls. Use millisecond scheduling with `millis()` comparisons.
+
+### Modular Development Patterns (v20)
+
+#### When Making Changes
+1. **Identify the correct module** based on primary responsibility:
+   - **config:** Settings, preferences, calibration values
+   - **sensors:** Hardware I/O, ISRs, raw data collection  
+   - **weather:** Calculations, forecasting, derived metrics
+   - **power:** Sleep management, day/night modes, LED control
+   - **storage:** SD operations, CSV logging, file management
+   - **mqtt:** MQTT client, publishing, broker communication
+   - **web:** HTTP routes, HTML/JSON responses, OTA
+2. **Respect module boundaries:** Don't mix sensor I/O with web serving, or config with weather calculations
+3. **Use clean interfaces:** Pass data via function parameters, not hidden global access
+4. **Maintain isolation:** Each module should compile with minimal dependencies
+
+#### Cross-Module Communication
+- **Main orchestrator calls modules:** `loop()` coordinates via `updateWindAverage()`, `handleMqtt()`, `performLogging()`, etc.
+- **Modules expose data via public functions:** `getSensorData()`, `getWeatherForecast()`, not direct global access
+- **Config module provides settings:** Other modules call `getConfigValue()` or access `appCfg` read-only
+- **Avoid tight coupling:** Don't make sensor module depend on web module, etc.
 
 ### Sensor and I/O guidelines
+- **All sensor logic belongs in sensors module** - Initialize I²C devices after `Wire.begin()` in `initializeSensors()`
 - Initialize I²C devices after `Wire.begin(I2C_SDA, I2C_SCL, SENSOR_I2C_FREQ_HZ)` and check return codes. Gate usage by a `*_Ok` boolean flag.
 - **BME680:** Call `performReading()` before accessing fields. Use `Adafruit_BME680` library (not BSEC2). Gas resistance is in Ω; divide by 1000 for kΩ.
 - **VEML7700:** Configure for max range (0-120k lux): `setGain(VEML7700_GAIN_1_8)`, `setIntegrationTime(VEML7700_IT_25MS)`. Guard against `NaN`/negative lux.

@@ -1,0 +1,237 @@
+---
+alwaysApply: true
+description: MQTT module rules for ESP32 Weather Station v20 - isolated MQTT client and publishing logic
+globs: mqtt.h,mqtt.cpp
+---
+
+## MQTT Module Rules
+
+Reference files:
+- MQTT module: mqtt.h, mqtt.cpp
+- Main orchestrator: [WeatherStationv20_modular.ino](mdc:WeatherStationv20_modular/WeatherStationv20_modular.ino)
+- Config module: config.h (for MQTT settings)
+
+### Module Responsibilities
+
+#### Core MQTT Functions
+- **Connection management:** `connectToMqtt()`, reconnection logic with retry backoff
+- **Publishing:** Weather forecast data, sensor readings, system status
+- **Configuration:** Broker settings, credentials, topic structure, publish intervals
+- **Health monitoring:** Connection status, publish success/failure tracking
+
+#### What MQTT Module Should NOT Do
+- **Sensor I/O:** No direct sensor reads - get data via function calls from sensors module
+- **Weather calculations:** Use weather module functions for derived metrics
+- **Configuration storage:** Read from config module, don't manage preferences directly
+- **Web serving:** No HTTP endpoints - that's web module responsibility
+
+### MQTT Configuration Fields
+From config module (`appCfg` struct):
+```cpp
+struct AppConfig {
+  bool mqttEnabled;           // Master enable flag
+  String mqttBroker;         // Broker hostname/IP
+  int mqttPort;              // Broker port (default 1883)
+  String mqttUsername;       // Auth username (empty = no auth)
+  String mqttPassword;       // Auth password
+  String mqttClientId;       // Client identifier (default: "weatherstation1")
+  String mqttTopicPrefix;    // Topic prefix (default: "weather/station1")
+  int mqttInterval;          // Publish interval in minutes (default 5)
+  bool mqttRetained;         // Use retained messages (default false)
+};
+```
+
+### Topic Structure and Message Formats
+
+#### Recommended Topic Hierarchy
+```
+weather/station1/temperature     → Temperature in configured units
+weather/station1/humidity        → Relative humidity %
+weather/station1/pressure        → Station pressure hPa  
+weather/station1/mslp           → Mean sea level pressure
+weather/station1/forecast       → General forecast string
+weather/station1/wind/speed     → Wind speed in mph
+weather/station1/wind/direction → Wind direction string (N, NE, etc.)
+weather/station1/wind/gust      → Wind gust speed mph
+weather/station1/rain/rate      → Current rain rate mm/hr
+weather/station1/rain/today     → Daily rain accumulation
+weather/station1/air_quality/pm25  → PM2.5 µg/m³
+weather/station1/air_quality/pm10  → PM10 µg/m³
+weather/station1/system/battery    → Battery voltage
+weather/station1/system/uptime     → Uptime seconds
+weather/station1/system/status     → JSON health summary
+```
+
+#### Message Payload Formats
+- **Numeric values:** Raw numbers as strings (e.g., "23.4", "1013.2")
+- **Status messages:** JSON objects with multiple fields
+- **Forecast:** Plain text strings ("Partly Cloudy", "Rain Likely")
+- **Health summary:** JSON with all sensor health flags
+
+### Publishing Strategy
+
+#### Selective Publishing
+- **Only publish when values change significantly** (configurable thresholds)
+- **Always publish on scheduled interval** (configurable via `mqttInterval`)
+- **Batch related updates** to avoid MQTT broker flooding
+- **Handle connection failures gracefully** with exponential backoff
+
+#### Data Validation Before Publishing
+```cpp
+// Example validation pattern
+bool publishTemperature(float temp) {
+  if (isnan(temp) || temp < -50.0 || temp > 80.0) {
+    debugPrintf("[MQTT] Invalid temperature: %.1f°F\n", temp);
+    return false;
+  }
+  return mqttClient.publish(topic.c_str(), String(temp, 1).c_str(), mqttRetained);
+}
+```
+
+### Connection Management
+
+#### Robust Connection Logic
+```cpp
+// Connection state tracking
+enum MqttState {
+  MQTT_DISCONNECTED,
+  MQTT_CONNECTING, 
+  MQTT_CONNECTED,
+  MQTT_ERROR
+};
+
+// Retry backoff timing
+static unsigned long reconnectDelayMs = 5000;  // Start with 5 seconds
+static const unsigned long maxReconnectDelayMs = 300000; // Cap at 5 minutes
+```
+
+#### Connection Health Monitoring
+- **Track last successful publish:** Detect silent failures
+- **Monitor broker responses:** Handle MQTT-level errors
+- **Reconnect on WiFi changes:** Handle network transitions
+- **Expose connection status:** Via `/live` JSON and debug output
+
+### Integration with Other Modules
+
+#### Data Dependencies
+```cpp
+// Get sensor data (read-only)
+float temp = getTemperatureF();          // from sensors module
+float forecast = getGeneralForecast();    // from weather module
+bool sdOk = getStorageHealth();          // from storage module
+
+// Get configuration (read-only)
+bool enabled = appCfg.mqttEnabled;       // from config module
+String broker = appCfg.mqttBroker;
+```
+
+#### Publishing Coordination
+- **Called from main loop:** `handleMqtt()` function manages all MQTT operations
+- **Triggered by events:** Major state changes (day/night, weather alerts)
+- **Scheduled publishing:** Configurable interval via `mqttInterval` minutes
+- **On-demand publishing:** Special events (boot, configuration changes)
+
+### Error Handling and Diagnostics
+
+#### Connection Failures
+- **Log connection attempts** with timestamps and error codes
+- **Implement exponential backoff** to avoid overwhelming broker
+- **Fall back gracefully** when broker unavailable (don't block other operations)
+- **Retry connection** on WiFi reconnection events
+
+#### Publishing Failures  
+- **Track publish success/failure rates** for diagnostics
+- **Don't retry failed publishes indefinitely** (avoid memory leaks)
+- **Log failed messages** at debug level with reasons
+- **Continue operations** even if MQTT is down
+
+### Security Considerations
+
+#### Authentication
+- **Support username/password auth** when configured
+- **Handle empty credentials** for open brokers  
+- **Don't log passwords** in debug output
+- **Store credentials securely** in config module preferences
+
+#### Topic Security
+- **Use meaningful topic prefixes** to avoid conflicts
+- **Allow topic customization** via configuration
+- **Consider retained message implications** for sensitive data
+- **Document expected subscriber permissions**
+
+### Performance Guidelines
+
+#### Memory Management
+- **Minimize dynamic allocations** in MQTT callbacks
+- **Reuse String objects** where possible to reduce fragmentation
+- **Limit message payload sizes** to avoid memory pressure
+- **Clean up failed connections** promptly to free resources
+
+#### Network Efficiency
+- **Batch related updates** within reasonable time windows
+- **Use appropriate QoS levels** (typically QoS 0 for sensor data)
+- **Consider message retention** based on data persistence needs
+- **Implement client-side throttling** to respect broker limits
+
+### Configuration Examples
+
+#### Basic Configuration
+```json
+{
+  "mqttEnabled": true,
+  "mqttBroker": "192.168.1.100", 
+  "mqttPort": 1883,
+  "mqttClientId": "weatherstation1",
+  "mqttTopicPrefix": "weather/backyard",
+  "mqttInterval": 5
+}
+```
+
+#### Advanced Configuration  
+```json
+{
+  "mqttEnabled": true,
+  "mqttBroker": "mqtt.example.com",
+  "mqttPort": 8883,
+  "mqttUsername": "weather_user",
+  "mqttPassword": "secure_password",
+  "mqttClientId": "ws-001",
+  "mqttTopicPrefix": "sensors/weather/station01", 
+  "mqttInterval": 2,
+  "mqttRetained": true
+}
+```
+
+### Debugging and Monitoring
+
+#### Debug Output
+- **Use `debugPrintf()`** for conditional debug logging
+- **Log connection state changes** with timestamps  
+- **Track publish success/failure counts** over time
+- **Monitor broker response times** for performance analysis
+
+#### Health Reporting
+```cpp
+// Expose MQTT health in /live JSON
+{
+  "mqtt_enabled": true,
+  "mqtt_connected": true,
+  "mqtt_last_publish": "2024-01-15T10:30:45Z",
+  "mqtt_publish_count": 1247,
+  "mqtt_error_count": 3
+}
+```
+
+### Testing and Validation
+
+#### Module Testing
+- **Test with broker offline:** Verify graceful degradation
+- **Test authentication:** Validate username/password handling
+- **Test network changes:** Reconnection after WiFi disruption
+- **Test publish limits:** Verify throttling and backoff behavior
+
+#### Integration Testing  
+- **End-to-end message flow:** From sensor reading to MQTT publish
+- **Configuration changes:** Verify settings update without restart
+- **Resource usage:** Monitor memory and CPU impact
+- **Long-term stability:** 24+ hour continuous operation testing
