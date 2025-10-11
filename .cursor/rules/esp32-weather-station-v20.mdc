@@ -1,0 +1,239 @@
+---
+alwaysApply: true
+description: Modular architecture rules for ESP32 Weather Station v20 - clean separation of concerns across 7 modules
+globs: *.ino,*.cpp,*.h
+---
+
+## ESP32 Weather Station v20 – Modular Architecture Rules
+
+Reference files:
+- Main orchestrator: [WeatherStationv20_modular.ino](mdc:WeatherStationv20_modular/WeatherStationv20_modular.ino)
+- Module headers: config.h, sensors.h, weather.h, power.h, storage.h, mqtt.h, web.h
+- Legacy reference: [WaetherStation08_24_25_v18.ino](mdc:WaetherStation08_24_25_v18.ino/WaetherStation08_24_25_v18.ino.ino)
+
+### Modular Architecture Overview
+**Core principle:** The monolithic 4,705-line v18/v19 codebase has been refactored into:
+- **Main orchestrator:** 336 lines (coordination only)
+- **7 focused modules:** 4,560 lines total across clean functional boundaries
+- **100% feature preservation:** All 57 functions, all logic maintained
+- **Benefits:** Easier maintenance, isolated changes, testable modules, reduced merge conflicts
+
+### Module Boundaries and Responsibilities
+
+#### 1. **config.h/cpp** - Configuration Management
+- `AppConfig` struct and all persistent settings
+- `loadAppConfig()`, `saveAppConfig()` functions
+- Preferences namespace `app` with JSON storage
+- WiFi configuration handling (namespace `wifi`)
+- **Exports:** Global `appCfg` object, config load/save functions
+- **Dependencies:** ArduinoJson, Preferences
+- **No direct sensor I/O or web serving**
+
+#### 2. **sensors.h/cpp** - Hardware I/O and Data Acquisition
+- All sensor initialization: BME680, VEML7700, SDS011, wind, rain, leaf
+- ISR handlers: `rainIsr()`, `windIsr()` with critical sections
+- Raw data collection and immediate processing
+- Battery/ADC readings
+- **Exports:** Sensor read functions, health flags, ISR setup
+- **Dependencies:** Wire, Adafruit libraries, Serial2 for SDS011
+- **No web endpoints or persistent storage**
+
+#### 3. **weather.h/cpp** - Meteorological Calculations
+- Derived metrics: dew point, heat index, wet bulb, MSLP
+- Pressure trend analysis and forecasting algorithms
+- ETo (evapotranspiration) calculations
+- Rain rate computations and accumulation
+- **Exports:** Weather computation functions, forecast strings
+- **Dependencies:** math.h, config module for altitude/units
+- **Pure calculations - no I/O**
+
+#### 4. **power.h/cpp** - Sleep Management and Day/Night Modes
+- Day/Night state machine with lux-based decisioning
+- Deep sleep preparation and RTC alarm programming
+- LED status management and non-blocking blink sequences
+- Power mode transitions (MODE_DAY/MODE_NIGHT)
+- **Exports:** `updateDayNightState()`, `prepareDeepSleep()`, LED functions
+- **Dependencies:** RTClib, esp_sleep.h, sensors module for lux
+- **Controls system lifecycle**
+
+#### 5. **storage.h/cpp** - SD Card Operations and CSV Logging
+- SD card initialization and health monitoring
+- CSV header management and data row writing
+- `/logs.csv` format preservation (30-column v18.2 schema)
+- Log timing and cadence management
+- **Exports:** `initializeSD()`, `performLogging()`, SD health flags
+- **Dependencies:** SD library, config for intervals, sensors for data
+- **Maintains CSV API contract**
+
+#### 6. **mqtt.h/cpp** - MQTT Client and Publishing
+- MQTT connection management and reconnection logic
+- Weather data publishing with configurable intervals
+- Forecast and sensor data formatting for MQTT
+- Connection health monitoring
+- **Exports:** `connectToMqtt()`, `handleMqtt()`, `publishForecastToMqtt()`
+- **Dependencies:** WiFiClient, config for broker settings
+- **Optional subsystem - can be disabled**
+
+#### 7. **web.h/cpp** - HTTP Server and Web UI
+- All route handlers: `/`, `/live`, `/config`, `/view-logs`, `/download`
+- HTML generation for dashboard and settings pages
+- JSON API responses with schema preservation
+- OTA update integration
+- **Exports:** `setupServerRoutes()`, `setupOTA()`, server instance
+- **Dependencies:** WebServer, ArduinoJson, ElegantOTA
+- **Maintains HTTP API contract**
+
+### Module Interaction Rules
+
+#### Cross-Module Dependencies
+```
+Main ← config, sensors, weather, power, storage, mqtt, web
+web → sensors, weather, storage, config (read-only)
+mqtt → sensors, weather, config (read-only)  
+storage → sensors, weather, config (read-only)
+weather → config (for units/altitude)
+power → sensors (for lux), config (for thresholds)
+sensors → config (for calibration values)
+```
+
+#### Data Flow Patterns
+- **Downward:** Main orchestrator calls module functions
+- **Upward:** Modules expose data via public functions/globals
+- **Cross-module:** Always through well-defined public APIs
+- **Shared state:** Minimize; prefer function parameters and return values
+
+### Development Guidelines
+
+#### When Adding Features
+1. **Identify the correct module** based on primary responsibility
+2. **Check dependencies:** Does this require cross-module data?
+3. **Maintain boundaries:** Don't mix concerns (e.g., no web serving in sensors module)
+4. **Update exports:** Add new functions to appropriate header
+5. **Test isolation:** Each module should compile independently
+
+#### Module File Structure
+```cpp
+// module.h - Public interface only
+#ifndef MODULE_H
+#define MODULE_H
+
+// Public functions and globals
+extern bool moduleHealthFlag;
+void initializeModule();
+float getModuleData();
+
+#endif
+
+// module.cpp - Implementation
+#include "module.h"
+#include "config.h" // Only include needed dependencies
+
+// Private variables and helper functions
+static bool initialized = false;
+
+// Public function implementations
+void initializeModule() { ... }
+```
+
+#### Cross-Module Communication
+- **Prefer function calls** over global variable access
+- **Pass parameters explicitly** rather than relying on global state
+- **Return structured data** or use output parameters for complex data
+- **Minimize coupling:** Each module should work with minimal knowledge of others
+
+### Legacy Compatibility and Migration
+
+#### Preserving v18 API Contracts
+- **HTTP endpoints:** All routes and response formats unchanged
+- **CSV schema:** 30-column header preserved exactly (v18.2)
+- **JSON fields:** All existing `/live` fields maintained
+- **Configuration:** Backward-compatible preference loading
+
+#### Migration Strategy
+- **Phase 1:** Extract modules while preserving all functionality
+- **Phase 2:** Clean up internal APIs between modules
+- **Phase 3:** Add new features using modular boundaries
+- **Never break:** Existing dashboards, CSV parsers, or configuration
+
+### Code Style for Modular Architecture
+
+#### Naming Conventions
+- **Modules:** Lowercase with underscores (e.g., `weather_calculations.cpp`)
+- **Public functions:** Module prefix + action (e.g., `sensors_readBME680()`)
+- **Private functions:** Static with descriptive names
+- **Global state:** Module prefix + descriptive name (e.g., `sensorBmeOk`)
+
+#### Include Order
+```cpp
+// Standard libraries first
+#include <Wire.h>
+#include <WiFi.h>
+
+// Project modules second
+#include "config.h"
+#include "sensors.h"
+
+// Module-specific headers last
+#include "Adafruit_BME680.h"
+```
+
+#### Error Handling
+- **Each module** manages its own error states
+- **Health flags** exposed for dependent modules
+- **Graceful degradation** when optional modules fail
+- **No crashing** the main loop due to module failures
+
+### Testing and Validation
+
+#### Module-Level Testing
+- **Compile each module** independently with minimal dependencies
+- **Mock dependencies** where needed for unit testing
+- **Verify public APIs** work as documented
+- **Test error conditions** and recovery
+
+#### Integration Testing
+- **Full system boot** with all modules enabled
+- **Selective module disable** to test degradation
+- **Cross-module data flow** verification
+- **Performance impact** measurement vs monolithic version
+
+#### Regression Testing
+- **All v18 functionality** preserved
+- **API response formats** unchanged
+- **Timing and power behavior** maintained
+- **Configuration migration** works correctly
+
+### Performance Considerations
+
+#### Memory Usage
+- **Stack efficiency:** Avoid deep call chains across modules
+- **Heap management:** Each module cleans up its allocations
+- **Static allocation:** Prefer over dynamic where possible
+- **RTC memory:** Coordinate usage to avoid conflicts
+
+#### Timing Constraints
+- **ISR performance:** Keep sensor ISRs in sensors module, minimal latency
+- **Loop() efficiency:** Module updates should be non-blocking
+- **Web response time:** Keep `/live` under 50ms despite modular calls
+- **Sleep timing:** Power module controls all sleep decisions
+
+### Future Extensibility
+
+#### Adding New Modules
+1. **Define clear boundaries** and responsibilities
+2. **Create header with public API** following naming conventions  
+3. **Implement with minimal dependencies** on other modules
+4. **Add health flag** to main status reporting
+5. **Update main orchestrator** to initialize and call module
+
+#### Module Splitting
+- **If a module grows too large** (>1000 lines), consider splitting
+- **Maintain cohesion:** Related functions should stay together
+- **Minimize interfaces:** Avoid creating too many small modules
+- **Document dependencies** clearly in module headers
+
+#### Version Management
+- **Module versioning:** Track major changes to module interfaces
+- **Compatibility matrix:** Document which module versions work together
+- **Migration guides:** Provide upgrade paths for configuration changes
+- **Rollback capability:** Maintain ability to revert to monolithic if needed

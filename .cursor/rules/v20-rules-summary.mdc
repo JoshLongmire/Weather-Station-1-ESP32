@@ -1,0 +1,175 @@
+---
+alwaysApply: true  
+description: Master index and summary of ESP32 Weather Station v20 modular architecture Cursor rules
+---
+
+# ESP32 Weather Station v20 - Cursor Rules Summary
+
+## Rule Files Overview
+
+### 1. **esp32-weather-station-v20.mdc** - Modular Architecture Rules
+**Primary rule file** for the new modular architecture:
+- Module boundaries and responsibilities (7 modules: config, sensors, weather, power, storage, mqtt, web)  
+- Cross-module communication patterns
+- Development guidelines for working with modules
+- Migration from monolithic v18/v19 to modular v20
+
+### 2. **esp32-weather-station.mdc** - Core Firmware Rules  
+**Updated for v20** with modular references:
+- Build environment and library requirements
+- Pin assignments and hardware configuration
+- ISR safety and timing constraints  
+- Sensor I/O guidelines with module assignments
+- Testing checklist and integration points
+
+### 3. **api-contract.mdc** - Stable API Preservation
+**Unchanged contracts** maintained across v18→v20:
+- `/live` JSON schema (30 fields, extend-only policy)
+- CSV format (v18.2, 30 columns, append-only)  
+- Preferences structure and backward compatibility
+- Web UI element IDs and endpoint behaviors
+
+### 4. **power-timing-isr.mdc** - System Timing Rules
+**Power module responsibilities** in v20:
+- Day/Night mode decisions with lux thresholds
+- Deep sleep coordination and RTC alarm programming
+- ISR management (rain, wind) with critical sections
+- LED status patterns and non-blocking sequences
+
+### 5. **mqtt-module.mdc** - MQTT Module Guidelines
+**New module-specific rules** for v20:
+- MQTT client connection management and publishing  
+- Topic structure and message formats
+- Integration patterns with other modules
+- Configuration, security, and performance guidelines
+
+## Architecture Evolution: v18 → v20
+
+### What Changed
+- **Monolithic → Modular:** 4,705 lines split into 7 focused modules
+- **Main orchestrator:** 336 lines of coordination logic only  
+- **Clear boundaries:** Each module has single responsibility
+- **Isolated changes:** Modifications stay within module boundaries
+
+### What Stayed the Same
+- **All APIs preserved:** HTTP endpoints, JSON responses, CSV format
+- **Hardware configuration:** Pin assignments, sensor setup, timing  
+- **User experience:** Dashboard, configuration, logging behavior
+- **Data contracts:** Field names, units, health flags unchanged
+
+## Key Development Principles
+
+### 1. Module Selection
+When adding features, choose the correct module:
+```
+config   → Settings, preferences, calibration values
+sensors  → Hardware I/O, ISRs, raw data collection  
+weather  → Calculations, forecasting, derived metrics
+power    → Sleep management, day/night, LED control  
+storage  → SD operations, CSV logging, file management
+mqtt     → MQTT client, publishing, broker communication
+web      → HTTP routes, HTML/JSON responses, OTA
+```
+
+### 2. Cross-Module Communication
+- **Downward:** Main orchestrator calls module functions
+- **Upward:** Modules expose data via public APIs
+- **Lateral:** Minimal - prefer data passing through main orchestrator
+- **Configuration:** Config module provides read-only access to `appCfg`
+
+### 3. Boundary Enforcement  
+❌ **Don't do:**
+- Sensor I/O in web module
+- HTTP serving in sensors module  
+- Direct global variable access across modules
+- Tight coupling between unrelated modules
+
+✅ **Do:**
+- Keep modules focused on single responsibility
+- Use explicit function parameters for data exchange
+- Expose module health via boolean flags
+- Maintain backward compatibility in all modules
+
+## Validation Checklist
+
+Before deploying v20 modular code:
+
+### Compilation
+- [ ] Compiles for ESP32-S3 and classic ESP32 
+- [ ] All modules compile independently
+- [ ] Feature flags work correctly (`ENABLE_*`)
+- [ ] No undefined references between modules
+
+### API Compatibility  
+- [ ] `/live` JSON contains all expected fields
+- [ ] CSV header matches v18.2 format (30 columns)
+- [ ] Configuration migration works from v18/v19
+- [ ] Web dashboard functions identically
+
+### Runtime Behavior
+- [ ] Boot sequence completes in all modes
+- [ ] Day/Night transitions work correctly
+- [ ] Deep sleep triggers after serve windows
+- [ ] All sensor modules initialize properly
+- [ ] SD logging maintains cadence and format
+
+### Performance  
+- [ ] `/live` response under 50ms
+- [ ] Memory usage comparable to monolithic version
+- [ ] ISR latency unchanged (rain, wind)
+- [ ] Power consumption profile maintained
+
+## Migration Guide
+
+### From Monolithic v18/v19
+1. **Extract modules** following the established boundaries
+2. **Move functions** to appropriate module files
+3. **Update includes** to use module headers  
+4. **Verify exports** match expected public APIs
+5. **Test integration** with main orchestrator
+6. **Validate contracts** remain unchanged
+
+### Adding New Modules
+1. **Define clear scope** and responsibilities
+2. **Create header** with public API only
+3. **Implement** with minimal external dependencies  
+4. **Add health flag** to system status reporting
+5. **Update orchestrator** to initialize and coordinate
+6. **Document** interaction patterns with existing modules
+
+## Common Pitfalls and Solutions
+
+### Pitfall: Cross-Module Dependencies
+**Problem:** Sensors module trying to access web module functions
+**Solution:** Pass data through main orchestrator or use callback patterns
+
+### Pitfall: Global Variable Abuse  
+**Problem:** Multiple modules directly accessing shared global state
+**Solution:** Centralize in config module with controlled access functions
+
+### Pitfall: Circular Dependencies
+**Problem:** Module A includes B, Module B includes A
+**Solution:** Use forward declarations and interface abstractions
+
+### Pitfall: Module Bloat
+**Problem:** Single module growing too large with mixed responsibilities  
+**Solution:** Split along functional lines while maintaining cohesion
+
+## Future Extensibility
+
+### Adding Features
+1. Identify primary module responsibility
+2. Check if existing modules can handle the functionality
+3. Consider creating new module if scope is substantial
+4. Maintain clean interfaces and minimal coupling
+5. Add appropriate health monitoring and error handling
+
+### Version Management  
+- Track module interface versions for breaking changes
+- Maintain compatibility matrix for module combinations
+- Provide migration tools for major architectural updates
+- Document rollback procedures for failed upgrades
+
+---
+
+**Remember:** The modular architecture in v20 is designed for maintainability, not performance. The primary goals are easier development, isolated changes, and reduced merge conflicts while preserving 100% backward compatibility with existing deployments and integrations.
