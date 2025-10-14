@@ -46,7 +46,7 @@ An ESP32‑based, solar‑friendly weather station that logs to SD, serves a liv
 
 ## Features
 
-- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574), Leaf wetness (LM393)
+- **Sensors:** BME680 (T/RH/P + gas), VEML7700 (ambient light); optional: UV analog (GUVA‑S12SD), SDS011 (PM2.5/PM10), Hall anemometer (wind), Wind vane (PCF8574), Leaf wetness (LM393), Soil moisture (resistive hygrometer), Soil temperature (10K thermistor probes)
 - **Storage:** SD card (`/logs.csv`) with CSV header & rolling logs
 - **Time:** DS3231 RTC (preferred) with NTP fallback and daily drift check
 - **Connectivity:** Wi‑Fi Station with AP fallback, mDNS (configurable hostname)
@@ -138,6 +138,8 @@ The modular refactoring has been thoroughly verified:
   - Optional: Hall anemometer (GPIO interrupt) — wind speed
   - Optional: PCF8574 (I²C) — 8-point wind vane direction
   - Optional: LM393 leaf wetness (analog) — moisture detection
+  - Optional: Resistive soil moisture (analog) — soil moisture percentage
+  - Optional: 10K soil temperature probes (analog) — 2" and 10" depth temperatures
 - **RTC:** DS3231 (INT/SQW → GPIO2) with daily NTP sync and drift correction
 - **Storage:** microSD (SPI)
 - **LED:** status LED on GPIO37 (S3 mapping)
@@ -158,6 +160,10 @@ The modular refactoring has been thoroughly verified:
 | Wind vane (PCF8574) | I²C (0x20-0x27) |
 | UV analog (GUVA‑S12SD) | 6 |
 | Leaf wetness analog | 3 (S3), 34 (classic ESP32) |
+| Soil moisture analog | 1 (S3), 32 (classic ESP32) |
+| Soil moisture digital | 38 (S3), 33 (classic ESP32) |
+| Soil temp 2" probe | 39 (S3), 35 (classic ESP32) |
+| Soil temp 10" probe | 40 (S3), 36 (classic ESP32) |
 | SDS011 UART | RX=16, TX=17 |
 
 ### Board specifics
@@ -191,6 +197,8 @@ Tested with the Lonely Binary ESP32‑S3 Development Board (16MB Flash, 8MB PSRA
 | Hall Anemometer + Wind Vane | $15-25 | Wind speed & direction | [Amazon](https://a.co/d/0iTu9BR) |
 | PCF8574 I/O Expander | $3-5 | For wind vane interface | [Amazon](https://www.amazon.com/dp/B098B5CGYJ?ref=ppx_yo2ov_dt_b_fed_asin_title) |
 | LM393 Leaf Wetness Sensor | $5-8 | Agriculture applications | Amazon/AliExpress |
+| Resistive Soil Moisture Sensor | $3-5 | Soil moisture monitoring | Amazon/AliExpress |
+| 10K Soil Temperature Probes (2-pack) | $8-12 | 2" and 10" depth soil temperatures | Amazon/AliExpress |
 | Tipping Bucket Rain Gauge | $15-30 | 3D printed or commercial | DIY (see 3D files) |
 | Solar Panel (5W) | $10-20 | For 24/7 solar operation | [Amazon](https://www.amazon.com/dp/B0DPDNGYDV?ref=ppx_yo2ov_dt_b_fed_asin_title) |
 | MPPT Charge Controller (900mA) | $8-12 | Battery charging | [Amazon](https://www.amazon.com/dp/B07MML4YJV) |
@@ -373,24 +381,20 @@ Over-the-air firmware updates using ElegantOTA with basic authentication protect
   "sds_awake": true,
   "sds_warm": true,
   "sds_auto_sleep_ms_left": 85000,
-  
   "wind_mph": 3.4,
   "wind_gust_mph": 7.8,
   "wind_avg_mph_1h": 2.7,
   "wind_dir": "NE",
   "wind_dir_idx": 1,
   "wind_vane_ok": true,
-  
   "leaf_pct": 45.2,
   "leaf_wet": false,
   "leaf_wet_hours_today": 2.3,
-  
   "eto_hourly_mm": 0.152,
   "eto_hourly_in": 0.006,
   "eto_daily_mm": 3.65,
   "eto_daily_in": 0.144,
   "eto_unit": "mm/day",
-  
   "dew_f": 50.3,
   "hi_f": 73.9,
   "wbt_f": 54.4,
@@ -603,6 +607,7 @@ Wi‑Fi networks are managed via:
 - Rain gauge: [Tipping bucket rain meter](https://www.printables.com/model/641148-tipping-bucket-rain-meter) by jattie on Printables 
 - [Wind speed gauge anemometer v3.0](https://www.printables.com/model/625326-wind-speed-gauge-anemometer-v30) by shermluge on Printables
 - [SDS011 Dust sensor enclosure](https://www.thingiverse.com/thing:2516382) by sumpfing on Thingiverse
+- [BME680 sensor location mount for tripod](https://www.thingiverse.com/thing:5571184) - Secure mounting solution for the BME680 temperature, humidity, pressure, and VOC sensor
 - Wind vane: Currently in development and design phase — help needed with balancing the model
 
 <p align="center">

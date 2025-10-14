@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v20.3] - 2025-01-15
+
+### Added - Soil Temperature Probe Integration
+- **10K thermistor soil temperature probes** (2" and 10" depths)
+  - Dual-depth soil temperature monitoring for agriculture applications
+  - 8-sample ADC averaging for stability and noise reduction
+  - Steinhart-Hart equation for accurate temperature conversion
+  - Both Fahrenheit and Celsius readings available
+  - Health flag for sensor functionality monitoring
+- **Pin assignments:**
+  - ESP32-S3: 2" probe GPIO 39, 10" probe GPIO 40
+  - Classic ESP32: 2" probe GPIO 35, 10" probe GPIO 36
+- **CSV logging:**
+  - Added `soil_temp_2in_f` and `soil_temp_10in_f` columns (32nd and 33rd columns total)
+  - Backward-compatible with existing logs
+- **JSON API:**
+  - `soil_temp_2in_f`, `soil_temp_2in_c` — 2" depth temperatures
+  - `soil_temp_10in_f`, `soil_temp_10in_c` — 10" depth temperatures
+  - `soil_temp_ok` — Sensor health flag
+- **Dashboard integration:**
+  - New soil temperature tiles in Agriculture section
+  - Real-time charts for both depths
+  - Temperature difference calculation (2" vs 10" depth)
+
+### Technical Details
+- **Feature flag:** `ENABLE_SOIL_TEMP` (default: 1)
+- **Reading cadence:** 1-second intervals with ADC averaging
+- **Temperature range:** -40°C to +125°C (-40°F to +257°F)
+- **Accuracy:** ±0.5°C with proper calibration
+- **Probe specifications:** 10K thermistor @ 25°C, waterproof design
+
+### Documentation Updates
+- Updated README.md with soil temperature probes in features and pin assignments
+- Updated API.md with complete soil temperature sensor documentation
+- Added to Bill of Materials with verified purchase links
+- Updated CSV schema documentation (31 → 33 columns)
+
+---
+
+## [v20.2] - 2025-01-15
+
+### Added - Soil Moisture Sensor Integration
+- **Resistive soil moisture sensor support** (Icstation Soil Hygrometer)
+  - Analog output reading with 8-sample averaging for stability
+  - EMA smoothing (alpha=0.20) for noise reduction
+  - Configurable dry/wet calibration points (ADC values 0-4095)
+  - Percentage mapping (0-100%, 0=dry, 100=wet)
+  - Dry/wet state detection with configurable threshold
+  - Debug mode for field calibration with raw ADC display
+- **Pin assignments:**
+  - ESP32-S3: Analog GPIO 1, Digital GPIO 38 (resolved conflicts with DS3231 INT and SDS011 UART)
+  - Classic ESP32: Analog GPIO 32, Digital GPIO 33
+- **Configuration options:**
+  - `soil_moisture_debug` — Show calibration values on dashboard
+  - `soil_moisture_adc_dry` — Dry soil ADC calibration (default: 3300)
+  - `soil_moisture_adc_wet` — Wet soil ADC calibration (default: 1500)
+  - `soil_moisture_dry_pct` — Dry threshold percentage (default: 30.0%)
+- **Dashboard integration:**
+  - New "Soil Moisture (%)" tile with real-time chart
+  - Debug information display when enabled
+  - Added to Agriculture section alongside Leaf Wetness and ETo
+- **CSV logging:**
+  - Added `soil_moisture_pct` column (31st column total)
+  - Backward-compatible with existing logs
+- **JSON API:**
+  - `soil_moisture_raw` — EMA-smoothed raw ADC value
+  - `soil_moisture_pct` — Soil moisture percentage
+  - `soil_moisture_dry` — Dry/wet boolean state
+  - Debug fields when `soil_moisture_debug=true`
+
+### Technical Details
+- **Feature flag:** `ENABLE_SOIL_MOISTURE` (default: 1)
+- **Reading cadence:** 1-second intervals with EMA smoothing
+- **Pin conflict resolution:** Digital pin moved from GPIO 2 → 17 → 10 → 38 to avoid DS3231 INT and SDS011 UART conflicts
+- **ADC sampling:** 8-sample averaging with 11dB attenuation
+- **Calibration:** Runtime configurable via `/config` web interface
+
+### Documentation Updates
+- Updated README.md with soil moisture sensor in features and pin assignments
+- Updated API.md with complete soil moisture sensor documentation
+- Added to Bill of Materials with verified purchase links
+- Updated CSV schema documentation (30 → 31 columns)
+
+---
+
 ## [v20.1-improved] - 2025-10-11
 
 ### Added - Code Quality & Reliability Improvements

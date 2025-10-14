@@ -45,6 +45,8 @@ All HTTP endpoints are implemented in `web.cpp`, sensor functions in `sensors.cp
   - Optional: Hall anemometer (wind speed + gust)
   - Optional: PCF8574 wind vane (8-point compass direction)
   - Optional: LM393 leaf wetness sensor (moisture detection with 24h accumulation)
+  - Optional: Resistive soil moisture sensor (soil moisture percentage with calibration)
+  - Optional: 10K soil temperature probes (2" and 10" depth temperatures)
 - Optional: Accessories and verified purchase links are listed in the project **Bill of Materials**; see README or the quick list below.
 - Storage: SD card (`/logs.csv`)
 - Time: DS3231 RTC (preferred) with daily NTP syncing and drift correction
@@ -78,12 +80,20 @@ All HTTP endpoints are implemented in `web.cpp`, sensor functions in `sensors.cp
 - **Wind vane (PCF8574 I²C):** Addresses 0x20-0x27 (auto-detected)
 - **UV analog (GUVA‑S12SD):** Pin 6
 - **Leaf wetness analog:** Pin 3 (S3), Pin 34 (classic ESP32)
+- **Soil moisture analog:** Pin 1 (S3), Pin 32 (classic ESP32)
+- **Soil moisture digital:** Pin 38 (S3), Pin 33 (classic ESP32)
+- **Soil temp 2" probe:** Pin 39 (S3), Pin 35 (classic ESP32)
+- **Soil temp 10" probe:** Pin 40 (S3), Pin 36 (classic ESP32)
 - **SDS011 UART:** RX=16, TX=17
 - **BME680 I²C addresses:** 0x76 (primary), 0x77 (fallback)
 
 ### Classic ESP32 pins:
 - **I²C:** SDA=21, SCL=22
 - **Leaf wetness analog:** Pin 34
+- **Soil moisture analog:** Pin 32
+- **Soil moisture digital:** Pin 33
+- **Soil temp 2" probe:** Pin 35
+- **Soil temp 10" probe:** Pin 36
 
 ### Timing and mode constants:
 - `DEEP_SLEEP_SECONDS = 600` (10 minutes between wakes in NIGHT mode)
@@ -101,17 +111,19 @@ All HTTP endpoints are implemented in `web.cpp`, sensor functions in `sensors.cp
 - `ENABLE_WIND` — Hall anemometer wind speed (default: 1)
 - `ENABLE_WINDVANE` — PCF8574 wind vane direction (default: 1)
 - `ENABLE_LEAF` — LM393 leaf wetness sensor (default: 1)
+- `ENABLE_SOIL_MOISTURE` — Resistive soil moisture sensor (default: 1)
+- `ENABLE_SOIL_TEMP` — 10K soil temperature probes (default: 1)
 
 ## CSV Log Schema
 
 File: `/logs.csv`
 
-### Header (extended v18.2, includes wind gust, rain totals, leaf wetness, ETo):
+### Header (extended v18.2, includes wind gust, rain totals, leaf wetness, ETo, soil moisture, soil temperature):
 ```
-timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event,leaf_raw,leaf_pct,leaf_wet,leaf_wet_hours,eto_hourly,eto_daily
+timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,uv_index,voltage,voc_kohm,mslp_inHg,rain,boot_count,pm25_ugm3,pm10_ugm3,wind_mph,wind_dir,wind_gust_mph,rain_1h,rain_today,rain_event,leaf_raw,leaf_pct,leaf_wet,leaf_wet_hours,eto_hourly,eto_daily,soil_moisture_pct,soil_temp_2in_f,soil_temp_10in_f
 ```
 
-### Column descriptions (30 columns total):
+### Column descriptions (33 columns total):
 1. **timestamp** — Local time in format `YYYY-MM-DD HH:MM:SS` (12h or 24h per config)
 2. **temp_f** — Temperature in °F
 3. **humidity** — Relative humidity (%)
@@ -142,10 +154,13 @@ timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,
 28. **leaf_wet_hours** — Accumulated wet hours since local midnight (decimal hours)
 29. **eto_hourly** — Reference evapotranspiration rate (mm/h or in/h per config unit)
 30. **eto_daily** — Cumulative reference evapotranspiration today (mm/day or in/day per config unit)
+31. **soil_moisture_pct** — Soil moisture percentage (0-100%, 0=dry, 100=wet)
+32. **soil_temp_2in_f** — Soil temperature at 2" depth in °F (10K thermistor probe)
+33. **soil_temp_10in_f** — Soil temperature at 10" depth in °F (10K thermistor probe)
 
 ### Example row:
 ```
-2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34,2450,45,0,2.3,0.152,3.65
+2025-01-01 15:42:17,72.8,43.2,50.3,73.9,1013.62,Steady,Fair,455.0,320,3.2,4.07,12.5,30.10,0.28,123,8.5,12.1,3.4,NE,7.8,0.12,0.34,0.34,2450,45,0,2.3,0.152,3.65,65.2,68.5,62.1
 ```
 
 ### Notes:
@@ -154,6 +169,8 @@ timestamp,temp_f,humidity,dew_f,hi_f,pressure,pressure_trend,forecast,lux,uv_mv,
 - Rain columns use the configured unit (`rain_unit` setting: `mm` or `in`) at write time
 - `wind_gust_mph` uses classic NOAA method: highest 5-second sample rate in last 10 minutes
 - Legacy logs (pre‑v18) used 14 columns; new columns were appended. Clearing logs via `/reset` writes the extended header.
+- Soil moisture sensor added in v20.2 (31st column).
+- Soil temperature probes added in v20.3 (32nd and 33rd columns).
 - Boot event: After initial startup log, an extra row is appended with only timestamp and boot_count (other fields blank)
 
 ## HTTP API
@@ -311,11 +328,40 @@ Uses advanced multi-sensor fusion combining pressure trends, wind speed/gusts, h
 - `eto_daily_in` (float) — Cumulative ETo today (in/day)
 - `eto_unit` (string) — Current CSV/UI unit: `mm/day` or `in/day`
 
+#### Soil Moisture (Resistive Hygrometer)
+- `soil_moisture_raw` (float) — EMA-smoothed raw ADC value (0-4095)
+- `soil_moisture_pct` (float) — Soil moisture percentage (0-100%, 0=dry, 100=wet)
+- `soil_moisture_dry` (bool) — Dry/wet state (hysteresis applied)
+- `soil_moisture_adc_dry` (int) — Raw calibration endpoint DRY (only when `soil_moisture_debug=true`)
+- `soil_moisture_adc_wet` (int) — Raw calibration endpoint WET (only when `soil_moisture_debug=true`)
+- `soil_moisture_dry_pct` (float) — % threshold for "dry" condition (only when `soil_moisture_debug=true`)
+
+#### Soil Temperature (10K Thermistor Probes)
+- `soil_temp_2in_f` (float) — Soil temperature at 2" depth in °F
+- `soil_temp_2in_c` (float) — Soil temperature at 2" depth in °C
+- `soil_temp_10in_f` (float) — Soil temperature at 10" depth in °F
+- `soil_temp_10in_c` (float) — Soil temperature at 10" depth in °C
+- `soil_temp_ok` (bool) — Soil temperature sensor health flag
+
 **Method:**
 - Prefers FAO-56 Penman-Monteith when temperature, humidity, wind speed, pressure, and lux are available
 - Falls back to Hargreaves-Samani when solar radiation (lux) is unavailable or during night
 - Daily accumulation resets at local midnight
 - Hourly values are logged at each cadence interval
+
+**Soil Moisture Sensor:**
+- Reads analog pin with 8-sample averaging for stability
+- Applies EMA smoothing with alpha=0.20 for noise reduction
+- Maps ADC values to percentage using configurable dry/wet calibration points
+- Determines dry/wet state based on configurable threshold percentage
+- Debug mode shows raw ADC values and calibration settings on dashboard
+
+**Soil Temperature Probes:**
+- 10K thermistor probes at 2" and 10" depths
+- Reads analog pins with 8-sample averaging for stability
+- Applies Steinhart-Hart equation for accurate temperature conversion
+- Provides both Fahrenheit and Celsius readings
+- Health flag indicates sensor functionality
 
 #### System & Diagnostics
 - `uptime` (int) — Uptime in seconds since current boot
@@ -369,6 +415,14 @@ Uses advanced multi-sensor fusion combining pressure trends, wind speed/gusts, h
   "leaf_pct": 45.2,
   "leaf_wet": false,
   "leaf_wet_hours_today": 2.3,
+  "soil_moisture_raw": 2156.7,
+  "soil_moisture_pct": 65.2,
+  "soil_moisture_dry": false,
+  "soil_temp_2in_f": 68.5,
+  "soil_temp_2in_c": 20.3,
+  "soil_temp_10in_f": 62.1,
+  "soil_temp_10in_c": 16.7,
+  "soil_temp_ok": true,
   "eto_hourly_mm": 0.152,
   "eto_hourly_in": 0.006,
   "eto_daily_mm": 3.65,
@@ -544,6 +598,12 @@ curl "http://weatherstation1.local/view-logs?field=temp&type=between&min=60&max=
 - `leaf_wet_on_pct` (float) — % threshold to declare WET (0-100%, default: 55.0)
 - `leaf_wet_off_pct` (float) — % threshold to declare DRY (0-100%, default: 45.0)
 
+**💧 Soil Moisture Sensor**
+- `soil_moisture_debug` (select: Off/On) — Show raw ADC and calibration values on dashboard for field calibration
+- `soil_moisture_adc_dry` (int) — Raw ADC value when soil is dry (0-4095, default: 3300)
+- `soil_moisture_adc_wet` (int) — Raw ADC value when soil is wet (0-4095, default: 1500)
+- `soil_moisture_dry_pct` (float) — % threshold to declare soil DRY (0-100%, default: 30.0)
+
 **💧 Evapotranspiration (ETo)**
 - `eto_unit` (select: mm/in) — ETo unit for CSV/UI (mm/day or in/day)
 - `latitude` (float) — Latitude in degrees for ETo solar radiation calculation (−90 to +90, negative = South, default: 40.0)
@@ -617,6 +677,10 @@ curl http://weatherstation1.local/config
 - `leafwet` (int) — Leaf ADC wet calibration (0-4095)
 - `leafweton` (float) — Leaf wet threshold ON (0-100%)
 - `leafwetoff` (float) — Leaf wet threshold OFF (0-100%)
+- `soilmdbg` (string) — Soil moisture debug: `0` or `1`
+- `soilmdry` (int) — Soil moisture ADC dry calibration (0-4095)
+- `soilmwet` (int) — Soil moisture ADC wet calibration (0-4095)
+- `soilmdrypct` (float) — Soil moisture dry threshold % (0-100%)
 - `etou` (string) — ETo unit: `mm` or `in`
 - `lat` (float) — Latitude (−90 to 90 degrees)
 - `dbg` (string) — Verbose debug: `0` or `1`
